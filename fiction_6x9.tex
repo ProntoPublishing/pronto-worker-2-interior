@@ -1,0 +1,175 @@
+% Fiction Template - 6x9 Trim Size
+% Professional novel formatting with XeLaTeX
+% Author: Pronto Publishing
+% Version: 1.0.0
+
+\documentclass[12pt,openany]{book}
+
+% ============================================================================
+% PACKAGES
+% ============================================================================
+
+\usepackage{fontspec}           % Font selection for XeLaTeX
+\usepackage{geometry}            % Page layout
+\usepackage{setspace}            % Line spacing
+\usepackage{fancyhdr}            % Headers and footers
+\usepackage{titlesec}            % Chapter/section formatting
+\usepackage{tocloft}             % Table of contents formatting
+\usepackage{microtype}           % Typography improvements
+\usepackage{ragged2e}            % Better justification
+\usepackage{hyphenat}            % Hyphenation control
+
+% ============================================================================
+% PAGE GEOMETRY (6x9 inches)
+% ============================================================================
+
+\geometry{
+    paperwidth=6in,
+    paperheight=9in,
+    top=0.75in,
+    bottom=0.75in,
+    inner=0.75in,
+    outer=0.5in,
+    headheight=14pt,
+    headsep=0.25in,
+    footskip=0.25in
+}
+
+% ============================================================================
+% FONTS
+% ============================================================================
+
+% Main font: {{FONT_NAME}} (Garamond, Palatino, or Times)
+\setmainfont{{{FONT_NAME}}}[
+    Ligatures=TeX,
+    Numbers=OldStyle
+]
+
+% ============================================================================
+% TYPOGRAPHY
+% ============================================================================
+
+% Line spacing: 1.2 for fiction
+\setstretch{1.2}
+
+% Paragraph formatting
+\setlength{\parindent}{0.25in}
+\setlength{\parskip}{0pt}
+
+% Widow and orphan control
+\widowpenalty=10000
+\clubpenalty=10000
+
+% Hyphenation
+\hyphenpenalty=1000
+\exhyphenpenalty=1000
+
+% ============================================================================
+% HEADERS AND FOOTERS
+% ============================================================================
+
+\pagestyle{fancy}
+\fancyhf{}  % Clear all headers and footers
+
+% Header: Author name (left) and Book title (right)
+\fancyhead[LE]{\small\itshape {{AUTHOR_NAME}}}
+\fancyhead[RO]{\small\itshape {{BOOK_TITLE}}}
+
+% Footer: Page number (center)
+\fancyfoot[C]{\thepage}
+
+% Plain style for chapter pages
+\fancypagestyle{plain}{
+    \fancyhf{}
+    \fancyfoot[C]{\thepage}
+    \renewcommand{\headrulewidth}{0pt}
+}
+
+% Remove header rule
+\renewcommand{\headrulewidth}{0pt}
+
+% ============================================================================
+% CHAPTER FORMATTING
+% ============================================================================
+
+% Chapter title formatting
+\titleformat{\chapter}[display]
+    {\normalfont\Large\centering}
+    {\MakeUppercase{\chaptertitlename}\ \thechapter}
+    {1em}
+    {\Large\MakeUppercase}
+
+\titlespacing*{\chapter}{0pt}{50pt}{40pt}
+
+% ============================================================================
+% TABLE OF CONTENTS
+% ============================================================================
+
+\renewcommand{\contentsname}{Contents}
+\setlength{\cftbeforechapskip}{8pt}
+
+% ============================================================================
+% CUSTOM COMMANDS
+% ============================================================================
+
+% Scene break
+\newcommand{\scenebreak}{%
+    \par\vspace{\baselineskip}%
+    \centerline{* * *}%
+    \par\vspace{\baselineskip}%
+}
+
+% ============================================================================
+% DOCUMENT
+% ============================================================================
+
+\begin{document}
+
+% Front matter
+\frontmatter
+\pagestyle{plain}
+
+% Title page
+\begin{titlepage}
+    \centering
+    \vspace*{2in}
+    {\Huge\textbf{{{BOOK_TITLE}}}}\\[1em]
+    {\Large {{AUTHOR_NAME}}}
+    \vfill
+\end{titlepage}
+
+% Copyright page
+\thispagestyle{empty}
+\vspace*{\fill}
+\begin{flushleft}
+\small
+Copyright \textcopyright\ {{YEAR}} by {{AUTHOR_NAME}}\\[1em]
+All rights reserved. No part of this book may be reproduced in any form or by any electronic or mechanical means, including information storage and retrieval systems, without permission in writing from the publisher, except by a reviewer who may quote brief passages in a review.\\[1em]
+First Edition\\[1em]
+ISBN: {{ISBN}}
+\end{flushleft}
+\clearpage
+
+% Table of contents (optional)
+% \tableofcontents
+% \clearpage
+
+% Main matter
+\mainmatter
+\pagestyle{fancy}
+
+% ============================================================================
+% CONTENT PLACEHOLDER
+% ============================================================================
+
+{{CONTENT}}
+
+% ============================================================================
+% BACK MATTER
+% ============================================================================
+
+\backmatter
+
+% About the Author, Also By, etc. are included in {{CONTENT}}
+
+\end{document}
