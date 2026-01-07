@@ -33,7 +33,7 @@ class ArtifactDownloader:
         Download and parse artifact from URL.
         
         Args:
-            artifact_url: Public URL to manuscript.v1.json
+            artifact_url: Public URL to manuscript.v1.json (or R2 key)
             
         Returns:
             Parsed artifact dict
@@ -41,19 +41,23 @@ class ArtifactDownloader:
         logger.info(f"Downloading artifact from {artifact_url}")
         
         try:
-            response = requests.get(artifact_url, timeout=30)
-            response.raise_for_status()
+            # Extract the R2 key from the URL if it's a full URL
+            # URL format: https://pub-xxxxx.r2.dev/services/recXXX/manuscript.v1.json
+            # Key format: services/recXXX/manuscript.v1.json
+            if artifact_url.startswith('http'):
+                # Extract key from URL (everything after the domain)
+                key = artifact_url.split('.dev/')[-1]
+                logger.info(f"Extracted R2 key: {key}")
+            else:
+                key = artifact_url
             
-            artifact = response.json()
+            # Download using R2 client with credentials
+            artifact_json = self.r2_client.download_json(key)
             
-            logger.info(f"Artifact downloaded: {len(artifact.get('content', {}).get('blocks', []))} blocks")
+            logger.info(f"Artifact downloaded: {len(artifact_json.get('content', {}).get('blocks', []))} blocks")
             
-            return artifact
+            return artifact_json
         
-        except requests.RequestException as e:
+        except Exception as e:
             logger.error(f"Failed to download artifact: {e}")
             raise ValueError(f"Could not download artifact from {artifact_url}: {str(e)}")
-        
-        except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse artifact JSON: {e}")
-            raise ValueError(f"Invalid JSON in artifact: {str(e)}")
