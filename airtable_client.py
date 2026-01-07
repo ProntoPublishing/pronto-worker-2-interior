@@ -5,7 +5,7 @@ Airtable Client
 Interacts with Airtable Services table.
 
 Author: Pronto Publishing
-Version: 1.0.0
+Version: 1.1.0
 """
 
 import os
@@ -70,3 +70,57 @@ class AirtableClient:
         except Exception as e:
             logger.error(f"Failed to update service {service_id}: {e}")
             return False
+    
+    def get_service_type(self, service_type_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get Service Type record from Service Catalog table.
+        
+        Args:
+            service_type_id: Airtable record ID
+            
+        Returns:
+            Service Type record fields or None if not found
+        """
+        try:
+            service_catalog_table = self.api.table(self.base_id, 'Service Catalog')
+            record = service_catalog_table.get(service_type_id)
+            return record['fields']
+        except Exception as e:
+            logger.error(f"Failed to get service type {service_type_id}: {e}")
+            return None
+    
+    def get_project(self, project_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get Project record.
+        
+        Args:
+            project_id: Airtable record ID
+            
+        Returns:
+            Project record fields or None if not found
+        """
+        try:
+            projects_table = self.api.table(self.base_id, 'Projects')
+            record = projects_table.get(project_id)
+            return record['fields']
+        except Exception as e:
+            logger.error(f"Failed to get project {project_id}: {e}")
+            return None
+    
+    def get_book_metadata(self, metadata_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get Book Metadata record.
+        
+        Args:
+            metadata_id: Airtable record ID
+            
+        Returns:
+            Book Metadata record fields or None if not found
+        """
+        try:
+            metadata_table = self.api.table(self.base_id, 'Book Metadata')
+            record = metadata_table.get(metadata_id)
+            return record['fields']
+        except Exception as e:
+            logger.error(f"Failed to get book metadata {metadata_id}: {e}")
+            return None
