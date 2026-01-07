@@ -163,16 +163,36 @@ class InteriorProcessor:
                 raise ValueError(f"Cannot process: {decision.reason}")
             
             # Step 7: Convert blocks to LaTeX
-            latex_content = self.latex_converter.convert(
+            latex_body = self.latex_converter.convert(
                 blocks=artifact['content']['blocks'],
                 params=params,
                 degraded_mode=(decision.action == "DEGRADE")
             )
             
-            # Save LaTeX to work directory
+            # Remove placeholder line if present
+            latex_body = latex_body.replace("% PREAMBLE_PLACEHOLDER", "").lstrip()
+            
+            # Pick template based on genre
+            template_name = "fiction_6x9.tex" if params.get("genre", "").lower() == "fiction" else "nonfiction_6x9.tex"
+            template_path = Path(__file__).resolve().parent / template_name
+            template = template_path.read_text(encoding="utf-8")
+            
+            # Fill template placeholders
+            now_year = str(datetime.now(timezone.utc).year)
+            latex_content = (
+                template
+                .replace("{{CONTENT}}", latex_body)
+                .replace("{{BOOK_TITLE}}", params.get("book_title", ""))
+                .replace("{{AUTHOR_NAME}}", params.get("author_name", ""))
+                .replace("{{FONT_NAME}}", params.get("font", "Garamond"))
+                .replace("{{YEAR}}", now_year)
+                .replace("{{ISBN}}", params.get("isbn", ""))
+            )
+            
+            # Save complete LaTeX document to work directory
             latex_file = self.work_dir / f"{run_id}.tex"
             latex_file.write_text(latex_content, encoding='utf-8')
-            logger.info(f"[{run_id}] LaTeX generated: {latex_file}")
+            logger.info(f"[{run_id}] LaTeX generated (templated): {latex_file}")
             
             # Step 8: Generate PDF with Pandoc + XeLaTeX
             pdf_file = self.pdf_generator.generate(
