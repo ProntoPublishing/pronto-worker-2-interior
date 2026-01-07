@@ -41,17 +41,14 @@ from datetime import datetime, timezone
 from typing import Dict, Any, Optional, List
 from uuid import uuid4
 
-# Add lib to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'lib'))
-
-from pronto_r2_client import ProntoR2Client
-from artifact_downloader import ArtifactDownloader
-from artifact_validator import validate_artifact
-from warning_handler import WarningHandler, ProcessingDecision
-from blocks_to_latex import BlocksToLatexConverter
-from pdf_generator import PDFGenerator
-from pdf_validator import PDFValidator
-from airtable_client import AirtableClient
+from lib.pronto_r2_client import ProntoR2Client
+from lib.artifact_downloader import ArtifactDownloader
+from lib.artifact_validator import validate_artifact
+from lib.warning_handler import WarningHandler, ProcessingDecision
+from lib.blocks_to_latex import BlocksToLatexConverter
+from lib.pdf_generator import PDFGenerator
+from lib.pdf_validator import PDFValidator
+from lib.airtable_client import AirtableClient
 
 # Configure logging
 logging.basicConfig(
