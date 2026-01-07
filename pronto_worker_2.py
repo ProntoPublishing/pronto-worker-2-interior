@@ -108,6 +108,23 @@ class InteriorProcessor:
             if not service:
                 raise ValueError(f"Service {service_id} not found")
             
+            # Step 1a: Idempotency guard - check if already processed
+            current_status = service.get('Status')
+            if current_status == 'Complete':
+                logger.info(f"[{run_id}] Service {service_id} already Complete; skipping")
+                return {
+                    'status': 'already_complete',
+                    'message': 'Service already processed',
+                    'service_id': service_id
+                }
+            if current_status == 'Processing':
+                logger.info(f"[{run_id}] Service {service_id} already Processing; skipping to avoid race")
+                return {
+                    'status': 'already_processing',
+                    'message': 'Service is currently being processed',
+                    'service_id': service_id
+                }
+            
             # Step 2: CANONICAL - Claim the service
             self._claim_service(service_id)
             
@@ -387,7 +404,7 @@ class InteriorProcessor:
             # CANONICAL: Write to generic artifact fields
             'Artifact URL': pdf_url,
             'Artifact Key': pdf_key,
-            'Artifact Type': 'interior_pdf'
+            'Artifact Type': 'Interior PDF'
         }
         
         # Store additional metadata in Operator Notes
