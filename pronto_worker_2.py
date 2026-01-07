@@ -179,12 +179,23 @@ class InteriorProcessor:
             
             # Fill template placeholders
             now_year = str(datetime.now(timezone.utc).year)
+            
+            # Map font names to installed fonts
+            font_map = {
+                "Garamond": "EB Garamond",
+                "Palatino": "Linux Libertine O",
+                "Times": "Liberation Serif",
+                "Times New Roman": "Liberation Serif"
+            }
+            requested_font = params.get("font", "Garamond")
+            actual_font = font_map.get(requested_font, "EB Garamond")
+            
             latex_content = (
                 template
                 .replace("{{CONTENT}}", latex_body)
                 .replace("{{BOOK_TITLE}}", params.get("book_title", ""))
                 .replace("{{AUTHOR_NAME}}", params.get("author_name", ""))
-                .replace("{{FONT_NAME}}", params.get("font", "Garamond"))
+                .replace("{{FONT_NAME}}", actual_font)
                 .replace("{{YEAR}}", now_year)
                 .replace("{{ISBN}}", params.get("isbn", ""))
             )

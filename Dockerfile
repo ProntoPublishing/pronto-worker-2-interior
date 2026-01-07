@@ -12,6 +12,10 @@ RUN apt-get update && apt-get install -y \
     texlive-latex-extra \
     fonts-liberation \
     fonts-dejavu \
+    fonts-ebgaramond \
+    fonts-ebgaramond-extra \
+    fonts-linuxlibertine \
+    fonts-urw-base35 \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
