@@ -28,6 +28,12 @@ RUN rm -rf /usr/share/fonts/woff \
  && rm -rf /root/.cache/fontconfig \
  && fc-cache -fv
 
+# Diagnostic: list every Garamond-related file present in the image so we
+# can see what paths fontconfig has to choose from. Printed to the build log.
+RUN echo "=== FONT INVENTORY ===" \
+ && find /usr/share/fonts -iname "*garamond*" 2>/dev/null || true \
+ && echo "=== END INVENTORY ==="
+
 # Set working directory
 WORKDIR /app
 
