@@ -31,7 +31,7 @@ def health():
     return jsonify({
         'status': 'healthy',
         'service': 'worker_2_interior_formatter',
-        'version': '1.1.0'
+        'version': '1.2.0'
     })
 
 @app.route('/process', methods=['POST'])

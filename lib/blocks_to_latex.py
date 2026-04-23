@@ -10,7 +10,7 @@ Handles:
 - Degraded mode (fallback rendering for unsupported elements)
 
 Author: Pronto Publishing
-Version: 1.0.0
+Version: 1.1.0
 """
 
 import re
@@ -89,13 +89,19 @@ class BlocksToLatexConverter:
         # Convert based on block type
         if block_type == 'title_page':
             return self._convert_title_page(formatted_text, meta)
-        
+
+        elif block_type == 'front_matter_title':
+            return self._convert_front_matter_title(formatted_text)
+
+        elif block_type == 'front_matter_dedication':
+            return self._convert_front_matter_dedication(formatted_text)
+
         elif block_type == 'front_matter_heading':
             return self._convert_front_matter_heading(formatted_text)
-        
+
         elif block_type == 'front_matter_text':
             return formatted_text
-        
+
         elif block_type == 'chapter_heading':
             return self._convert_chapter_heading(formatted_text, meta)
         
@@ -130,7 +136,9 @@ class BlocksToLatexConverter:
         
         else:
             logger.warning(f"Unknown block type: {block_type}")
-            return formatted_text
+            # Emit a LaTeX comment so compilation never breaks on unknown types.
+            # Content is lost rather than risking malformed output.
+            return f"% Unknown block type: {block_type}"
     
     def _apply_marks(self, text: str, marks: List[Dict[str, Any]]) -> str:
         """
@@ -194,6 +202,24 @@ class BlocksToLatexConverter:
         # Title page is handled by template
         return "% TITLE_PAGE_PLACEHOLDER"
     
+    def _convert_front_matter_title(self, text: str) -> str:
+        """Convert front_matter_title block: centered large text, new page after."""
+        return (
+            f"\\begin{{center}}\n"
+            f"{{\\Large {text}}}\n"
+            f"\\end{{center}}\n"
+            f"\\clearpage"
+        )
+
+    def _convert_front_matter_dedication(self, text: str) -> str:
+        """Convert front_matter_dedication block: centered italic text, new page after."""
+        return (
+            f"\\begin{{center}}\n"
+            f"\\textit{{{text}}}\n"
+            f"\\end{{center}}\n"
+            f"\\clearpage"
+        )
+
     def _convert_front_matter_heading(self, text: str) -> str:
         """Convert front matter heading (Dedication, Acknowledgments, etc.)."""
         return f"\\chapter*{{{text}}}\n\\addcontentsline{{toc}}{{chapter}}{{{text}}}"

@@ -64,7 +64,7 @@ class InteriorProcessor:
     def __init__(self):
         """Initialize processor with all dependencies."""
         self.worker_name = "worker_2_interior_formatter"
-        self.worker_version = "1.1.0"
+        self.worker_version = "1.2.0"
         
         # Initialize clients
         self.r2_client = ProntoR2Client(
