@@ -40,10 +40,16 @@
 % FONTS
 % ============================================================================
 
-% Main font: {{FONT_NAME}} (Garamond, Palatino, or Times)
-\setmainfont{{{FONT_NAME}}}[
-    Ligatures=TeX,
-    Numbers=Lining
+% Main font: EB Garamond, pinned to explicit OTF paths to bypass fontconfig.
+\setmainfont{EB Garamond}[
+  Path = /usr/share/fonts/opentype/ebgaramond/ ,
+  Extension = .otf ,
+  UprightFont = EBGaramond12-Regular ,
+  ItalicFont = EBGaramond12-Italic ,
+  BoldFont = EBGaramond12-Bold ,
+  BoldItalicFont = EBGaramond12-Bold ,
+  BoldItalicFeatures = {FakeSlant=0.2} ,
+  Ligatures = TeX ,
 ]
 
 % ============================================================================
