@@ -83,8 +83,10 @@ class PDFGenerator:
                 cwd=str(output_dir)
             )
             
-            if result.returncode != 0:
-                logger.error(f"XeLaTeX failed (pass {run_num}):")
+            pdf_exists = pdf_file.exists() and pdf_file.stat().st_size > 0
+
+            if not pdf_exists:
+                logger.error(f"XeLaTeX failed (pass {run_num}): no PDF produced")
                 logger.error(result.stdout)
                 logger.error(result.stderr)
                 log_tail = self._read_log_tail(
@@ -92,10 +94,15 @@ class PDFGenerator:
                 )
                 detail = log_tail or result.stderr or result.stdout or "<no output>"
                 raise RuntimeError(
-                    f"XeLaTeX compilation failed (pass {run_num}):\n{detail}"
+                    f"XeLaTeX compilation failed (pass {run_num}): no PDF produced\n{detail}"
                 )
-            
-            logger.info(f"XeLaTeX pass {run_num} completed")
+
+            if result.returncode != 0:
+                logger.info(
+                    f"XeLaTeX pass {run_num} exited {result.returncode} but produced a PDF; treating as success"
+                )
+            else:
+                logger.info(f"XeLaTeX pass {run_num} completed")
         
         # Check if PDF was created
         if not pdf_file.exists():
