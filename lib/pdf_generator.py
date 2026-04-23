@@ -87,7 +87,13 @@ class PDFGenerator:
                 logger.error(f"XeLaTeX failed (pass {run_num}):")
                 logger.error(result.stdout)
                 logger.error(result.stderr)
-                raise RuntimeError(f"XeLaTeX compilation failed: {result.stderr}")
+                log_tail = self._read_log_tail(
+                    output_dir / f"{run_id}.log", max_lines=50
+                )
+                detail = log_tail or result.stderr or result.stdout or "<no output>"
+                raise RuntimeError(
+                    f"XeLaTeX compilation failed (pass {run_num}):\n{detail}"
+                )
             
             logger.info(f"XeLaTeX pass {run_num} completed")
         
@@ -105,9 +111,23 @@ class PDFGenerator:
     def _cleanup_aux_files(self, output_dir: Path, run_id: str):
         """Clean up LaTeX auxiliary files."""
         aux_extensions = ['.aux', '.log', '.out', '.toc']
-        
+
         for ext in aux_extensions:
             aux_file = output_dir / f"{run_id}{ext}"
             if aux_file.exists():
                 aux_file.unlink()
                 logger.debug(f"Cleaned up: {aux_file}")
+
+    @staticmethod
+    def _read_log_tail(log_path: Path, max_lines: int = 50) -> str:
+        """Return the last N lines of an xelatex .log file, or "" on any failure."""
+        try:
+            if not log_path.exists():
+                return ""
+            with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+                lines = f.readlines()
+            tail = lines[-max_lines:] if len(lines) > max_lines else lines
+            return "".join(tail).rstrip()
+        except Exception as e:
+            logger.warning(f"Could not read .log file {log_path}: {e}")
+            return ""
