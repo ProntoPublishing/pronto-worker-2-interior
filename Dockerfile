@@ -23,7 +23,10 @@ RUN apt-get update && apt-get install -y \
 # Remove WOFF font variants — xdvipdfmx cannot embed WOFF, only TTF/OTF.
 # Debian's fonts-ebgaramond installs both; fontconfig may resolve italic
 # to the WOFF file, which aborts xelatex at PDF-generation time.
-RUN rm -rf /usr/share/fonts/woff && fc-cache -fv
+RUN rm -rf /usr/share/fonts/woff \
+ && rm -rf /var/cache/fontconfig/* \
+ && rm -rf /root/.cache/fontconfig \
+ && fc-cache -fv
 
 # Set working directory
 WORKDIR /app
