@@ -37,54 +37,65 @@ class RenderParams:
     Frozen so callers can't accidentally mutate a shared instance.
     Use `replace(params, foo=…)` to derive a modified copy.
 
+    Defaults are the Pronto Standard Edition v1 values from Doc 23
+    R-1.2 / R-1.3 / R-3.2. Override at construction for tests; for
+    production use the defaults verbatim ("opinionated by default,
+    custom by exception").
+
     Field categories:
 
-    Document-class options
-      - `openright`: per Doc 23 R-3.2 the canonical Pronto Standard
-        Edition value is True (\\documentclass[...,openright]{book}).
-        v1 substrate keeps False to match the current template.
+    Document-class options (Doc 23 R-3.2)
+      - openright=True. \\documentclass[12pt,openright]{book}.
 
-    Page geometry (inches)
-      - 6×9 trim per Doc 23 R-1.1
-      - asymmetric inside/outside per R-1.2
+    Page geometry (Doc 23 R-1.1, R-1.2; inches)
+      - 6×9 trim, asymmetric inside/outside to accommodate the gutter.
 
-    Body typography
-      - EB Garamond / 10.5pt / 14pt leading per R-1.3 (Doc 23 target)
-      - Substrate baseline keeps the current 12pt / 1.2-stretch values.
+    Body typography (Doc 23 R-1.3)
+      - EB Garamond, 10.5 pt body on 14 pt leading.
+      - First-line indent: 1em.
+
+    Note on the documentclass base size
+      LaTeX's `book` class accepts only {10,11,12}pt as the
+      documentclass base. We pass [12pt] and override the actual body
+      font size + leading via \\fontsize{10.5pt}{14pt}\\selectfont in
+      the body. This is the standard idiom for non-standard body sizes.
     """
     # -- documentclass ---------------------------------------------------
-    base_font_size_pt: float = 12.0
-    """Document-class base font size. v1 substrate matches current
-    template (12pt). Doc 23 R-1.3 target is 10.5pt."""
+    documentclass_base_size_pt: int = 12
+    """LaTeX `book` documentclass base size. Must be 10, 11, or 12 —
+    the only values the standard book class accepts. Doc 23's 10.5 pt
+    body is achieved via a body-level \\fontsize override, not by
+    changing this."""
 
-    openright: bool = False
-    """documentclass openright option. v1 substrate matches current
-    `openany`. Doc 23 R-3.2 mandates `openright`."""
+    openright: bool = True
+    """documentclass openright option. Doc 23 R-3.2 mandates
+    `openright` — every chapter starts on a recto."""
 
     # -- page geometry (inches) -----------------------------------------
     paper_width_in: float = 6.0
     paper_height_in: float = 9.0
-    inside_margin_in: float = 0.75
-    """Inside (binding-side) margin. Doc 23 R-1.2 target: 0.875."""
-    outside_margin_in: float = 0.5
-    """Outside (page-edge) margin. Doc 23 R-1.2 target: 0.625."""
+    inside_margin_in: float = 0.875
+    """Inside (binding-side) margin. Doc 23 R-1.2: 0.875in."""
+    outside_margin_in: float = 0.625
+    """Outside (page-edge) margin. Doc 23 R-1.2: 0.625in."""
     top_margin_in: float = 0.75
     bottom_margin_in: float = 0.75
 
     # -- body typography ------------------------------------------------
     body_font_family: str = "EB Garamond"
-    """Family name as XeLaTeX expects via fontspec. The
-    pronto_worker_2.process_service `font_map` translation logic moves
-    here in a follow-on commit."""
+    """Family name as XeLaTeX expects via fontspec."""
 
-    line_stretch: float = 1.2
-    """setstretch value. Substrate matches current template. Doc 23
-    targets 14pt leading on 10.5pt body, computed via fixed
-    baselineskip rather than a stretch factor."""
+    body_font_size_pt: float = 10.5
+    """Actual body font size. Per Doc 23 R-1.3 = 10.5pt."""
 
-    parindent_in: float = 0.25
-    """First-line indent in inches. Doc 23 R-1.3 target: 1em (≈ 0.146in
-    at 10.5pt). Substrate matches current 0.25in."""
+    body_leading_pt: float = 14.0
+    """Baselineskip in points. Per Doc 23 R-1.3 = 14pt."""
+
+    parindent_em: float = 1.0
+    """First-line indent in em (relative to body font size). Per
+    Doc 23 R-1.3 = 1em. Used on every paragraph except the first
+    paragraph of a chapter and post-scene-break paragraphs (per
+    R-3.5 / R-4.4 — applied at converter level, not template)."""
 
     # -- book metadata (carried through, not "typography" but lives on
     # this struct so the template-fill layer has one input). -----------
@@ -162,11 +173,11 @@ class RenderParams:
         return d
 
     def to_template_fills(self) -> Dict[str, str]:
-        """Return the {{PARAM_*}} substitution map the template
-        consumes. Substrate keeps the existing template intact and
-        emits a complete map anyway — the template ignores keys it
-        doesn't reference, so this is forward-compatible with the
-        Doc 23 typography flip without changing today's output.
+        """Return the {{PARAM_*}} substitution map the templates consume.
+
+        Every key here MUST appear in fiction_6x9.tex / nonfiction_6x9.tex
+        (or be reserved for a future template revision). The unit tests
+        verify post-substitution that no `{{PARAM_*}}` literal survives.
         """
         # Format floats deterministically: trim trailing zeros / dots.
         def fmt(x: float) -> str:
@@ -174,17 +185,18 @@ class RenderParams:
             return s if s else "0"
 
         return {
-            "{{PARAM_BASE_FONT_SIZE_PT}}": fmt(self.base_font_size_pt),
-            "{{PARAM_DOCCLASS_OPENING}}": "openright" if self.openright else "openany",
-            "{{PARAM_PAPER_WIDTH_IN}}":   fmt(self.paper_width_in),
-            "{{PARAM_PAPER_HEIGHT_IN}}":  fmt(self.paper_height_in),
-            "{{PARAM_INSIDE_MARGIN_IN}}":  fmt(self.inside_margin_in),
-            "{{PARAM_OUTSIDE_MARGIN_IN}}": fmt(self.outside_margin_in),
-            "{{PARAM_TOP_MARGIN_IN}}":    fmt(self.top_margin_in),
-            "{{PARAM_BOTTOM_MARGIN_IN}}": fmt(self.bottom_margin_in),
-            "{{PARAM_BODY_FONT_FAMILY}}": self.body_font_family,
-            "{{PARAM_LINE_STRETCH}}":     fmt(self.line_stretch),
-            "{{PARAM_PARINDENT_IN}}":     fmt(self.parindent_in),
+            "{{PARAM_DOCCLASS_BASE_SIZE_PT}}": str(self.documentclass_base_size_pt),
+            "{{PARAM_DOCCLASS_OPENING}}":      "openright" if self.openright else "openany",
+            "{{PARAM_PAPER_WIDTH_IN}}":        fmt(self.paper_width_in),
+            "{{PARAM_PAPER_HEIGHT_IN}}":       fmt(self.paper_height_in),
+            "{{PARAM_INSIDE_MARGIN_IN}}":      fmt(self.inside_margin_in),
+            "{{PARAM_OUTSIDE_MARGIN_IN}}":     fmt(self.outside_margin_in),
+            "{{PARAM_TOP_MARGIN_IN}}":         fmt(self.top_margin_in),
+            "{{PARAM_BOTTOM_MARGIN_IN}}":      fmt(self.bottom_margin_in),
+            "{{PARAM_BODY_FONT_FAMILY}}":      self.body_font_family,
+            "{{PARAM_BODY_FONT_SIZE_PT}}":     fmt(self.body_font_size_pt),
+            "{{PARAM_BODY_LEADING_PT}}":       fmt(self.body_leading_pt),
+            "{{PARAM_PARINDENT_EM}}":          fmt(self.parindent_em),
         }
 
 

@@ -1,9 +1,15 @@
 % Non-Fiction Template - 6x9 Trim Size
 % Professional non-fiction formatting with XeLaTeX
 % Author: Pronto Publishing
-% Version: 1.0.0
+% Version: 2.0.0 (Pronto Standard Edition v1 — Doc 23)
+%
+% Typography parameters live in lib/render_params.py and substitute
+% into the placeholders below at template-fill time. Pronto Standard
+% Edition v1 uses ONE set of typography values for fiction + nonfiction
+% (Doc 23 R-1.3); a future "nonfiction tier" can derive a separate
+% RenderParams variant.
 
-\documentclass[12pt,openany]{book}
+\documentclass[{{PARAM_DOCCLASS_BASE_SIZE_PT}}pt,{{PARAM_DOCCLASS_OPENING}}]{book}
 
 % ============================================================================
 % PACKAGES
@@ -21,16 +27,16 @@
 \usepackage{graphicx}            % Images (if needed)
 
 % ============================================================================
-% PAGE GEOMETRY (6x9 inches)
+% PAGE GEOMETRY (Doc 23 R-1.1 / R-1.2)
 % ============================================================================
 
 \geometry{
-    paperwidth=6in,
-    paperheight=9in,
-    top=0.75in,
-    bottom=0.75in,
-    inner=0.875in,
-    outer=0.625in,
+    paperwidth={{PARAM_PAPER_WIDTH_IN}}in,
+    paperheight={{PARAM_PAPER_HEIGHT_IN}}in,
+    top={{PARAM_TOP_MARGIN_IN}}in,
+    bottom={{PARAM_BOTTOM_MARGIN_IN}}in,
+    inner={{PARAM_INSIDE_MARGIN_IN}}in,
+    outer={{PARAM_OUTSIDE_MARGIN_IN}}in,
     headheight=14pt,
     headsep=0.25in,
     footskip=0.25in
@@ -53,14 +59,20 @@
 ]
 
 % ============================================================================
-% TYPOGRAPHY
+% TYPOGRAPHY (Doc 23 R-1.3)
 % ============================================================================
 
-% Line spacing: 1.15 for non-fiction (tighter than fiction)
-\setstretch{1.15}
+% Pronto Standard Edition v1 body type: 10.5pt on 14pt leading.
+% \fontsize takes (size, baselineskip) in pt. Redefining \normalsize
+% and applying it at \begin{document} ensures the body inherits the
+% new size; chapter / section commands re-derive their sizes via
+% titlesec config below using the standard LaTeX size-ladder relative
+% to \normalsize.
+\renewcommand{\normalsize}{\fontsize{{{PARAM_BODY_FONT_SIZE_PT}}pt}{{{PARAM_BODY_LEADING_PT}}pt}\selectfont}
+\AtBeginDocument{\normalsize}
 
 % Paragraph formatting
-\setlength{\parindent}{0.25in}
+\setlength{\parindent}{{{PARAM_PARINDENT_EM}}em}
 \setlength{\parskip}{0pt}
 
 % Widow and orphan control
