@@ -253,13 +253,56 @@ class BlocksToLatexConverter:
     # -- Role handlers ------------------------------------------------------
 
     def _render_title_page(self, block: Dict[str, Any], ctx: Dict[str, Any]) -> str:
-        """Title-page cluster members. The system-generated title page in
-        the LaTeX template handles {{BOOK_TITLE}} / {{AUTHOR_NAME}}; the
-        author-supplied cluster does not need to render again per H-001's
-        decision (which W2 sees on applied_rules[]). Emit a comment so
-        the source .tex remains traceable.
+        """Render an author-supplied title-page cluster member.
+
+        Each cluster block is centered. The first one (positional role
+        "title" per C-003's classification_notes) is rendered larger;
+        subsequent blocks (subtitle, byline) progressively smaller.
+        Falls back to a single sizing if the positional tag is absent.
+
+        The decision of whether the system title page from the template
+        is suppressed in favor of these blocks lives at the template-fill
+        layer (pronto_worker_2.py reads applied_rules[] for an H-001
+        entry). This handler only renders the author cluster; it does
+        not coordinate with the system title page.
         """
-        return f"% title_page block {block.get('id')} (suppressed; template owns the title page)"
+        text = self._render_spans(block)
+        if not text:
+            return ""
+
+        # Positional sub-role from classification_notes; absent on v1
+        # synthesized title_page blocks.
+        notes = block.get("classification_notes") or []
+        positional = ""
+        for n in notes:
+            if "positional role:" in n:
+                positional = n.split(":", 1)[-1].strip().lower()
+                break
+
+        if positional == "title" or not positional:
+            # Title (or unknown — assume primary).
+            return (
+                "\\begin{center}\n"
+                "\\vspace*{1in}\n"
+                f"{{\\Huge\\textbf{{{text}}}}}\n"
+                "\\end{center}\n"
+                "\\vspace{1em}"
+            )
+        if positional == "subtitle":
+            return (
+                "\\begin{center}\n"
+                f"{{\\Large {text}}}\n"
+                "\\end{center}\n"
+                "\\vspace{1em}"
+            )
+        # author_or_byline / anything else.
+        return (
+            "\\begin{center}\n"
+            f"{{\\large {text}}}\n"
+            "\\end{center}\n"
+            "\\vfill\n"
+            "\\clearpage"
+        )
 
     def _render_front_matter(self, block: Dict[str, Any], ctx: Dict[str, Any]) -> str:
         """Front-matter heading + (optional) body. Subtype steers the

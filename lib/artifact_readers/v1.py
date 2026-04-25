@@ -74,15 +74,18 @@ def read(artifact: Dict[str, Any]) -> Dict[str, Any]:
     in_blocks = artifact.get("content", {}).get("blocks", []) or []
     out_blocks: List[Dict[str, Any]] = []
     manuscript_meta: Dict[str, Any] = {"title": None, "subtitle": None, "author": None}
+    saw_author_title_page = False
 
     for blk in in_blocks:
         upgraded = _upgrade_block(blk)
         out_blocks.append(upgraded)
         # Synthesize manuscript_meta from front_matter_title text.
-        if blk.get("type") == "front_matter_title" and not manuscript_meta["title"]:
-            text = _block_text(blk)
-            if text:
-                manuscript_meta["title"] = text.strip()
+        if blk.get("type") == "front_matter_title":
+            saw_author_title_page = True
+            if not manuscript_meta["title"]:
+                text = _block_text(blk)
+                if text:
+                    manuscript_meta["title"] = text.strip()
 
     # Carry forward source / processing / analysis where possible.
     source = artifact.get("source") or {}
@@ -91,6 +94,22 @@ def read(artifact: Dict[str, Any]) -> Dict[str, Any]:
 
     # v1 carried analysis.warnings; v2 carries warnings at top level.
     v1_warnings = artifact.get("analysis", {}).get("warnings", []) or []
+
+    # Synthesize H-001 (Layer 5 author-title-page-vs-intake decision)
+    # when v1 evidence implies it: a v1 producer that emitted a
+    # front_matter_title block had effectively classified the author as
+    # having supplied a title page. The Doc 22 v1.0.x rule didn't run
+    # against v1 data, but the same decision applies — the system title
+    # page should be suppressed by the renderer. Recording it here lets
+    # the W2 template fill ((SYSTEM_TITLE_PAGE)) consistently regardless
+    # of which reader path produced the artifact.
+    applied_rules: List[Dict[str, Any]] = []
+    if saw_author_title_page:
+        applied_rules.append({
+            "rule": "H-001",
+            "version": "v1",
+            "decision": "used author title page; suppressed system-generated",
+        })
 
     out: Dict[str, Any] = {
         "schema_version": "2.0",
@@ -102,9 +121,9 @@ def read(artifact: Dict[str, Any]) -> Dict[str, Any]:
         "source":         source,
         "processing":     processing,
         "content":        {"blocks": out_blocks},
-        "applied_rules":  [],     # v1 didn't track these.
+        "applied_rules":  applied_rules,
         "warnings":       _upgrade_warnings(v1_warnings),
-        "rule_faults":    [],     # v1 didn't track these either.
+        "rule_faults":    [],     # v1 didn't track these.
     }
     # Only emit manuscript_meta when at least one field is populated.
     if any(manuscript_meta.values()):

@@ -701,5 +701,158 @@ class Test_ConverterEndToEndAcrossUpgrade(unittest.TestCase):
         self.assertIn("\\end{enumerate}", out)
 
 
+# ---------------------------------------------------------------------------
+# Iter 4 — wire-up
+# ---------------------------------------------------------------------------
+
+
+class Test_TemplateSystemTitlePagePlaceholder(unittest.TestCase):
+    """The templates carry a {{SYSTEM_TITLE_PAGE}} placeholder that
+    pronto_worker_2.py fills based on H-001's decision. This test
+    just confirms the placeholder is present in both templates and
+    that the substitution shape is round-trippable.
+    """
+
+    def test_each_template_has_system_title_page_placeholder(self):
+        for name in ("fiction_6x9.tex", "nonfiction_6x9.tex"):
+            text = (REPO_ROOT / name).read_text(encoding="utf-8")
+            self.assertEqual(
+                text.count("{{SYSTEM_TITLE_PAGE}}"), 1,
+                f"{name}: SYSTEM_TITLE_PAGE placeholder missing or duplicated"
+            )
+
+
+class Test_SystemTitlePageHelper(unittest.TestCase):
+    """The helper reads applied_rules[] for an H-001 entry and chooses
+    suppression vs the standard system title page block.
+    """
+
+    def test_h001_present_suppresses_system_block(self):
+        from pronto_worker_2 import _system_title_page_latex
+        artifact = {
+            "applied_rules": [
+                {"rule": "H-001", "version": "v1",
+                 "decision": "used author title page; suppressed system-generated"}
+            ]
+        }
+        out = _system_title_page_latex(artifact)
+        self.assertIn("suppressed by H-001", out)
+        self.assertNotIn("\\begin{titlepage}", out)
+
+    def test_h001_absent_emits_standard_block(self):
+        from pronto_worker_2 import _system_title_page_latex
+        artifact = {"applied_rules": []}
+        out = _system_title_page_latex(artifact)
+        self.assertIn("\\begin{titlepage}", out)
+        self.assertIn("{{BOOK_TITLE}}", out)
+        self.assertIn("{{AUTHOR_NAME}}", out)
+
+    def test_no_applied_rules_field_emits_standard_block(self):
+        from pronto_worker_2 import _system_title_page_latex
+        artifact = {}
+        out = _system_title_page_latex(artifact)
+        self.assertIn("\\begin{titlepage}", out)
+
+
+class Test_V1ReaderH001Synthesis(unittest.TestCase):
+
+    def test_front_matter_title_synthesizes_h001(self):
+        art = _minimal_v1_artifact([
+            {"id": "b_000001", "type": "front_matter_title",
+             "text": "The Long Quiet"},
+            {"id": "b_000002", "type": "paragraph", "text": "Body."},
+        ])
+        out = read_artifact(art)
+        h001 = [r for r in out["applied_rules"] if r.get("rule") == "H-001"]
+        self.assertEqual(len(h001), 1)
+        self.assertIn("suppressed system-generated", h001[0]["decision"])
+
+    def test_no_front_matter_title_no_h001(self):
+        """Long Quiet shape — no front_matter_title, just plain
+        paragraphs that the v1 producer didn't classify. v1 reader
+        must NOT synthesize H-001 in this case (no signal of an
+        author-supplied title page from the producer's side).
+        """
+        art = _minimal_v1_artifact([
+            {"id": "b_000001", "type": "paragraph", "text": "The Long Quiet"},
+            {"id": "b_000002", "type": "paragraph", "text": "Body."},
+        ])
+        out = read_artifact(art)
+        h001 = [r for r in out["applied_rules"] if r.get("rule") == "H-001"]
+        self.assertEqual(h001, [])
+
+    def test_v2_artifact_preserves_existing_h001(self):
+        """A v2.0 artifact that came in with H-001 in applied_rules
+        passes through the v2 reader unchanged. (W1 v5.0 emits H-001
+        natively when the author supplied a title page.)
+        """
+        art = _minimal_v2_artifact([
+            {"id": "b_000001", "type": "paragraph", "role": "title_page",
+             "spans": [{"text": "The Long Quiet", "marks": []}]},
+            {"id": "b_000002", "type": "heading", "heading_level": 2,
+             "role": "chapter_heading",
+             "chapter_number": 1, "chapter_title": "Opening",
+             "spans": [{"text": "Chapter 1", "marks": []}]},
+        ])
+        art["applied_rules"] = [
+            {"rule": "H-001", "version": "v1",
+             "decision": "used author title page; suppressed system-generated"}
+        ]
+        out = read_artifact(art)
+        h001 = [r for r in out["applied_rules"] if r.get("rule") == "H-001"]
+        self.assertEqual(len(h001), 1)
+
+
+class Test_TitlePageHandlerRenders(unittest.TestCase):
+
+    def test_title_block_renders_centered_huge_bold(self):
+        c = BlocksToLatexConverter()
+        block = {
+            "id": "b_000001", "type": "paragraph", "role": "title_page",
+            "spans": [{"text": "The Long Quiet", "marks": []}],
+            "classification_notes": ["title_page positional role: title"],
+        }
+        out = c.convert([block], params={})
+        self.assertIn("\\begin{center}", out)
+        self.assertIn("\\Huge", out)
+        self.assertIn("\\textbf{The Long Quiet}", out)
+
+    def test_subtitle_block_renders_large(self):
+        c = BlocksToLatexConverter()
+        block = {
+            "id": "b_000002", "type": "paragraph", "role": "title_page",
+            "spans": [{"text": "A Gentle Guide", "marks": []}],
+            "classification_notes": ["title_page positional role: subtitle"],
+        }
+        out = c.convert([block], params={})
+        self.assertIn("\\Large", out)
+        self.assertIn("A Gentle Guide", out)
+
+    def test_byline_block_renders_with_clearpage(self):
+        c = BlocksToLatexConverter()
+        block = {
+            "id": "b_000003", "type": "paragraph", "role": "title_page",
+            "spans": [{"text": "Test Author", "marks": []}],
+            "classification_notes": ["title_page positional role: author_or_byline"],
+        }
+        out = c.convert([block], params={})
+        self.assertIn("Test Author", out)
+        self.assertIn("\\clearpage", out)
+
+    def test_v1_title_block_without_positional_tag_renders_as_title(self):
+        """v1 reader synthesizes title_page role on front_matter_title
+        without populating classification_notes positional tags. The
+        handler defaults to title-rendering in that case.
+        """
+        c = BlocksToLatexConverter()
+        block = {
+            "id": "b_000001", "type": "paragraph", "role": "title_page",
+            "spans": [{"text": "Some Book", "marks": []}],
+        }
+        out = c.convert([block], params={})
+        self.assertIn("\\Huge", out)
+        self.assertIn("Some Book", out)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
