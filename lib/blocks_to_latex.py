@@ -1,122 +1,122 @@
 """
-Blocks to LaTeX Converter v2.0
-===============================
+Blocks to LaTeX Converter v3.0.0 (v1.3 / consume-manuscript-v2)
+================================================================
 
-Converts manuscript.v1.json blocks to LaTeX body markup.
+Consumes manuscript.v2.0-shaped blocks and emits LaTeX body markup.
+v1.0 artifacts are upgraded to v2.0 shape upstream by
+`lib.artifact_readers.read_artifact()` before reaching this converter,
+so this module sees a single representation: blocks with a non-null
+`role`, plus role-specific fields (chapter_number / chapter_title for
+chapter_heading, force_page_break for part_divider, subtype for
+front/back_matter, etc.).
 
-Contract-first design:
-  - Imports canonical block types from manuscript_schema.
-  - Has an explicit handler for EVERY block type in the schema.
-  - Fails loudly if a block type has no handler (schema was updated but
-    this file was not).
-  - Uses the canonical spans format for all text rendering.
+Why this is a rewrite vs. v2.0.0
+  v2.0.0 (still in W2 main pre-this-branch) dispatched on the v1
+  block `type` field — paragraph, chapter_heading, list, etc. The
+  dispatch axis was the v1 vocabulary. v2.0 artifacts use semantic
+  roles instead, so the dispatch axis flips. As a side effect, the
+  doubled-chapter bug ("CHAPTER 1\\nWhat Depression Actually Is" sent
+  whole into \\chapter{...}) is structurally impossible: chapter_title
+  carries the title alone; chapter_number is a separate field.
 
-Author: Pronto Publishing
-Version: 2.0.0
+Design
 
-Contract v1.1 integration (2026-04-23):
-  This file replaces the v1.x BlocksToLatexConverter shipped with Worker 2
-  through 1.2.0. It resolves the block-type vocabulary mismatch with the
-  schema (REVIEW_NOTES C1), the spans/positional-marks mismatch (C2), and
-  the partial LaTeX escaping (C3). All 14 canonical block types now have
-  explicit handlers; unknown types raise in `__init__` rather than silently
-  emitting `% Unknown block type: X` comments. Public API surface unchanged:
-  `BlocksToLatexConverter(degraded=bool).convert(blocks) -> str`.
-  Shared-schema import is relative to `lib/` (standard intra-package
-  convention in this repo).
+  - HANDLER_MAP keys are v2 roles (15 from Doc 22 v1.0.2 §Layer 2).
+  - __init__ verifies coverage; refuses to start if any role is
+    missing a handler.
+  - LaTeX special characters are escaped at span boundaries
+    (preserves the v2.0.0 C3 fix from REVIEW_NOTES).
+  - List grouping wraps consecutive list_item-role blocks in a single
+    itemize/enumerate based on the optional `list_ordered` field
+    (defaults to itemize when absent).
+  - Public API stays signature-compatible:
+      `BlocksToLatexConverter().convert(blocks, params, degraded_mode) -> str`
 """
-
+from __future__ import annotations
 import logging
-from typing import List, Dict, Any, Optional
-
-# Import the shared schema — single source of truth
-from .manuscript_schema import (
-    BLOCK_TYPES,
-    BLOCK_TYPES_WITH_TEXT,
-    BLOCK_TYPES_STRUCTURAL,
-    INLINE_MARKS,
-    BLOCK_FRONT_MATTER_TITLE,
-    BLOCK_FRONT_MATTER_COPYRIGHT,
-    BLOCK_FRONT_MATTER_DEDICATION,
-    BLOCK_TOC_MARKER,
-    BLOCK_CHAPTER_HEADING,
-    BLOCK_HEADING,
-    BLOCK_PARAGRAPH,
-    BLOCK_BLOCKQUOTE,
-    BLOCK_LIST,
-    BLOCK_SCENE_BREAK,
-    BLOCK_HORIZONTAL_RULE,
-    BLOCK_PAGE_BREAK,
-    BLOCK_BACK_MATTER_ABOUT_AUTHOR,
-    BLOCK_BACK_MATTER_ALSO_BY,
-    normalize_block_text,
-)
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
 
+# Canonical Layer 2 role enum from Doc 22 v1.0.2.
+ROLES = frozenset({
+    "title_page",
+    "front_matter",
+    "part_divider",
+    "chapter_heading",
+    "body_paragraph",
+    "scene_break",
+    "back_matter",
+    "heading",
+    "list_item",
+    "blockquote",
+    "table",
+    "image",
+    "code_block",
+    "footnote",
+    "structural",
+})
+
+# Canonical span marks vocabulary (Doc 22 v1.0.1 §CIR).
+SPAN_MARKS = frozenset({
+    "italic", "bold", "small_caps", "code",
+    "underline", "strikethrough", "superscript", "subscript",
+})
+
+
 class BlocksToLatexConverter:
-    """
-    Converts a normalized blocks array to LaTeX body content.
-
-    The output is the BODY only (no preamble, no \\begin{document}).
-    The caller (pronto_worker_2.py) is responsible for injecting this body
-    into the appropriate .tex template via the {{CONTENT}} placeholder.
-    """
-
-    # -----------------------------------------------------------------------
-    # Handler registry — maps every canonical block type to a method.
-    # If a block type exists in the schema but not here, __init__ will raise.
-    # -----------------------------------------------------------------------
+    """v3.0.0: v2.0-native, role-based dispatch."""
 
     HANDLER_MAP: Dict[str, str] = {
-        BLOCK_FRONT_MATTER_TITLE:       "_render_front_matter_title",
-        BLOCK_FRONT_MATTER_COPYRIGHT:   "_render_front_matter_copyright",
-        BLOCK_FRONT_MATTER_DEDICATION:  "_render_front_matter_dedication",
-        BLOCK_TOC_MARKER:               "_render_toc_marker",
-        BLOCK_CHAPTER_HEADING:          "_render_chapter_heading",
-        BLOCK_HEADING:                  "_render_heading",
-        BLOCK_PARAGRAPH:                "_render_paragraph",
-        BLOCK_BLOCKQUOTE:               "_render_blockquote",
-        BLOCK_LIST:                     "_render_list_item",
-        BLOCK_SCENE_BREAK:              "_render_scene_break",
-        BLOCK_HORIZONTAL_RULE:          "_render_horizontal_rule",
-        BLOCK_PAGE_BREAK:               "_render_page_break",
-        BLOCK_BACK_MATTER_ABOUT_AUTHOR: "_render_back_matter_about_author",
-        BLOCK_BACK_MATTER_ALSO_BY:      "_render_back_matter_also_by",
+        "title_page":      "_render_title_page",
+        "front_matter":    "_render_front_matter",
+        "part_divider":    "_render_part_divider",
+        "chapter_heading": "_render_chapter_heading",
+        "body_paragraph":  "_render_body_paragraph",
+        "scene_break":     "_render_scene_break",
+        "back_matter":     "_render_back_matter",
+        "heading":         "_render_heading",
+        "list_item":       "_render_list_item",
+        "blockquote":      "_render_blockquote",
+        "table":           "_render_table",
+        "image":           "_render_image",
+        "code_block":      "_render_code_block",
+        "footnote":        "_render_footnote",
+        "structural":      "_render_structural",
     }
 
-    # LaTeX special characters that need escaping
-    LATEX_ESCAPES = [
-        ('\\', r'\textbackslash{}'),   # Must be first
-        ('&',  r'\&'),
-        ('%',  r'\%'),
-        ('$',  r'\$'),
-        ('#',  r'\#'),
-        ('_',  r'\_'),
-        ('{',  r'\{'),
-        ('}',  r'\}'),
-        ('~',  r'\textasciitilde{}'),
-        ('^',  r'\textasciicircum{}'),
+    # LaTeX special-char escapes. Order matters: backslash first.
+    _ESCAPES = [
+        ("\\", "\\textbackslash{}"),
+        ("&",  r"\&"),
+        ("%",  r"\%"),
+        ("$",  r"\$"),
+        ("#",  r"\#"),
+        ("_",  r"\_"),
+        ("{",  r"\{"),
+        ("}",  r"\}"),
+        ("~",  r"\textasciitilde{}"),
+        ("^",  r"\textasciicircum{}"),
     ]
 
     def __init__(self):
-        """Initialize and verify exhaustive handler coverage."""
-        # Verify every schema block type has a handler
-        missing = BLOCK_TYPES - set(self.HANDLER_MAP.keys())
+        """Verify exhaustive role coverage."""
+        missing = ROLES - set(self.HANDLER_MAP.keys())
         if missing:
             raise RuntimeError(
-                f"BlocksToLatexConverter is missing handlers for block types: "
-                f"{sorted(missing)}. The schema was updated but the converter "
-                f"was not. This is a deployment-blocking error."
+                f"BlocksToLatexConverter is missing handlers for roles: "
+                f"{sorted(missing)}. The Layer 2 enum was updated but the "
+                f"converter was not. This is a deployment-blocking error."
             )
-
-        extra = set(self.HANDLER_MAP.keys()) - BLOCK_TYPES
+        extra = set(self.HANDLER_MAP.keys()) - ROLES
         if extra:
             logger.warning(
-                f"Converter has handlers for non-schema block types: "
+                f"Converter has handlers for non-canonical roles: "
                 f"{sorted(extra)}. These will never be called."
             )
+
+    # -- Public API ----------------------------------------------------------
 
     def convert(
         self,
@@ -124,345 +124,347 @@ class BlocksToLatexConverter:
         params: Dict[str, Any],
         degraded_mode: bool = False,
     ) -> str:
-        """
-        Convert blocks to LaTeX body content.
+        """Convert v2.0 blocks to LaTeX body content.
 
-        Args:
-            blocks: List of blocks from manuscript artifact (already normalized).
-            params: Formatting parameters (trim size, font, genre, etc.).
-            degraded_mode: If True, use fallback rendering for edge cases.
-
-        Returns:
-            LaTeX body content as string (no preamble, no document wrapper).
+        Returns a string suitable for substituting into the {{CONTENT}}
+        placeholder in fiction_6x9.tex / nonfiction_6x9.tex.
         """
         logger.info(
-            f"Converting {len(blocks)} blocks to LaTeX "
+            f"Converting {len(blocks)} v2 blocks to LaTeX "
             f"(degraded={degraded_mode})"
         )
 
-        output_parts: List[str] = []
+        out: List[str] = []
+        list_state = _ListState()
 
-        # State tracking for list grouping
-        current_list_group: Optional[int] = None
-        current_list_type: Optional[str] = None
-
-        # State tracking for back matter section headings
-        seen_about_author = False
-        seen_also_by = False
-
-        for i, raw_block in enumerate(blocks):
-            # Normalize legacy text → spans
-            block = normalize_block_text(raw_block)
-            block_type = block.get("type", "")
-            meta = block.get("meta", {})
-
-            # ---- List grouping logic ----
-            is_list = block_type == BLOCK_LIST
-            block_list_group = meta.get("list_group") if is_list else None
-            block_list_type = meta.get("list_type", "unordered") if is_list else None
-
-            # Close previous list if we're leaving a list group
-            if current_list_group is not None and (
-                not is_list or block_list_group != current_list_group
-            ):
-                env = "enumerate" if current_list_type == "ordered" else "itemize"
-                output_parts.append(f"\\end{{{env}}}")
-                output_parts.append("")
-                current_list_group = None
-                current_list_type = None
-
-            # Open new list if starting a new group
-            if is_list and block_list_group != current_list_group:
-                env = "enumerate" if block_list_type == "ordered" else "itemize"
-                output_parts.append(f"\\begin{{{env}}}")
-                current_list_group = block_list_group
-                current_list_type = block_list_type
-
-            # ---- Dispatch to handler ----
-            handler_name = self.HANDLER_MAP.get(block_type)
-
-            if handler_name is None:
-                # This should never happen if __init__ validation passed
-                logger.error(f"No handler for block type '{block_type}'")
-                output_parts.append(f"% ERROR: no handler for {block_type}")
+        for block in blocks:
+            role = block.get("role")
+            if role is None:
+                # Producer should have applied terminal default. The v2
+                # reader catches missing role; if we're here, something's
+                # off — emit a comment and continue rather than crash.
+                logger.error(f"Block {block.get('id')} has no role")
+                out.append(f"% ERROR: block {block.get('id')} has no role")
                 continue
 
+            # List-grouping: wrap consecutive list_item blocks.
+            new_env = list_state.transition(block, role)
+            if new_env.close_prev:
+                out.append(f"\\end{{{new_env.close_prev}}}")
+                out.append("")
+            if new_env.open_new:
+                out.append(f"\\begin{{{new_env.open_new}}}")
+
+            handler_name = self.HANDLER_MAP.get(role)
+            if handler_name is None:
+                # __init__ guarantees this can't happen, but defensive.
+                logger.error(f"No handler for role {role!r}")
+                out.append(f"% ERROR: no handler for role {role}")
+                continue
             handler = getattr(self, handler_name)
-
-            # Pass context for back matter heading tracking
-            ctx = {
-                "degraded": degraded_mode,
-                "seen_about_author": seen_about_author,
-                "seen_also_by": seen_also_by,
-            }
-
+            ctx = {"degraded": degraded_mode, "params": params}
             latex = handler(block, ctx)
-
-            # Update back matter tracking
-            if block_type == BLOCK_BACK_MATTER_ABOUT_AUTHOR:
-                seen_about_author = True
-            if block_type == BLOCK_BACK_MATTER_ALSO_BY:
-                seen_also_by = True
-
             if latex:
-                output_parts.append(latex)
-                output_parts.append("")  # Blank line between blocks
+                out.append(latex)
+                out.append("")
 
-        # Close any trailing open list
-        if current_list_group is not None:
-            env = "enumerate" if current_list_type == "ordered" else "itemize"
-            output_parts.append(f"\\end{{{env}}}")
-            output_parts.append("")
+        # Close any list still open at end-of-document.
+        if list_state.open_env:
+            out.append(f"\\end{{{list_state.open_env}}}")
+            out.append("")
 
-        return "\n".join(output_parts)
+        return "\n".join(out).rstrip() + "\n"
 
-    # ===================================================================
-    # Span rendering — the core text engine
-    # ===================================================================
+    # -- Span / text rendering ----------------------------------------------
 
     def _render_spans(self, block: Dict[str, Any]) -> str:
+        """Render a block's spans (or text) to escaped LaTeX, applying
+        per-span marks. v2 always uses spans (with at least one span).
+        For defensiveness against malformed input, falls back to
+        block.text.
         """
-        Render a block's spans to LaTeX text with inline formatting.
+        spans = block.get("spans")
+        if isinstance(spans, list) and spans:
+            parts: List[str] = []
+            for span in spans:
+                text = span.get("text", "") if isinstance(span, dict) else str(span)
+                marks = span.get("marks", []) if isinstance(span, dict) else []
+                # Escape THEN wrap, so escapes don't mangle LaTeX commands.
+                escaped = self._escape(text)
+                parts.append(self._wrap_with_marks(escaped, marks))
+            return "".join(parts)
+        return self._escape(block.get("text", "") or "")
 
-        Handles the canonical spans format:
-            [{"text": "hello ", "marks": []}, {"text": "world", "marks": ["bold"]}]
-
-        Also handles legacy format (block has 'text' string, no 'spans')
-        via normalize_block_text() which should have already been called.
+    def _wrap_with_marks(self, escaped_text: str, marks: List[str]) -> str:
+        """Wrap escaped text with the per-span marks. Marks not in the
+        canonical vocabulary are dropped silently (the v1 reader already
+        normalizes what it carries through; W1 v5.0 producer emits only
+        canonical marks).
         """
-        spans = block.get("spans", [])
+        if not marks:
+            return escaped_text
+        wrapped = escaped_text
+        for mark in marks:
+            if mark == "italic":
+                wrapped = f"\\textit{{{wrapped}}}"
+            elif mark == "bold":
+                wrapped = f"\\textbf{{{wrapped}}}"
+            elif mark == "small_caps":
+                wrapped = f"\\textsc{{{wrapped}}}"
+            elif mark == "code":
+                wrapped = f"\\texttt{{{wrapped}}}"
+            elif mark == "underline":
+                wrapped = f"\\underline{{{wrapped}}}"
+            elif mark == "strikethrough":
+                wrapped = f"\\sout{{{wrapped}}}"
+            elif mark == "superscript":
+                wrapped = f"\\textsuperscript{{{wrapped}}}"
+            elif mark == "subscript":
+                wrapped = f"\\textsubscript{{{wrapped}}}"
+            # else: unknown mark, drop silently.
+        return wrapped
 
-        if not spans:
-            # Fallback: if somehow we still have a plain text field
-            text = block.get("text", "")
-            return self._escape_latex(text)
-
-        parts = []
-        for span in spans:
-            text = span.get("text", "")
-            marks = span.get("marks", [])
-
-            escaped = self._escape_latex(text)
-
-            # Apply marks (innermost first, then wrap outward)
-            result = escaped
-            for mark in marks:
-                if mark == "italic":
-                    result = f"\\textit{{{result}}}"
-                elif mark == "bold":
-                    result = f"\\textbf{{{result}}}"
-                elif mark == "smallcaps":
-                    result = f"\\textsc{{{result}}}"
-                elif mark == "code":
-                    result = f"\\texttt{{{result}}}"
-                # Unknown marks are silently ignored (schema validation
-                # should have caught them upstream)
-
-            parts.append(result)
-
-        return "".join(parts)
-
-    def _render_spans_plain(self, block: Dict[str, Any]) -> str:
+    def _escape(self, text: str) -> str:
+        """Escape every LaTeX special character. Applied at span
+        boundaries before wrapping with marks (the v2.0.0 C3 fix).
         """
-        Render a block's spans as plain text (no LaTeX formatting commands),
-        but still escape LaTeX special characters.
+        if not text:
+            return ""
+        out = text
+        for ch, replacement in self._ESCAPES:
+            out = out.replace(ch, replacement)
+        return out
 
-        Used for contexts where inline formatting would break (e.g., chapter titles
-        in \\chapter{} commands where nested commands can cause issues).
+    # -- Plain text helper (titles, headings without inline marks) ---------
+
+    def _plain(self, block: Dict[str, Any]) -> str:
+        """Get a block's text as a single escaped string, ignoring marks.
+        Used for chapter titles, headings, and similar where running the
+        full mark-rendering would put `\\textbf{}` etc. inside `\\chapter{}`
+        — legal LaTeX but unusual.
         """
-        spans = block.get("spans", [])
-        if not spans:
-            return self._escape_latex(block.get("text", ""))
-
-        return "".join(self._escape_latex(s.get("text", "")) for s in spans)
-
-    def _escape_latex(self, text: str) -> str:
-        """Escape LaTeX special characters in text."""
-        for char, replacement in self.LATEX_ESCAPES:
-            text = text.replace(char, replacement)
-        return text
-
-    # ===================================================================
-    # Block handlers — one per canonical block type
-    # ===================================================================
-
-    def _render_front_matter_title(
-        self, block: Dict[str, Any], ctx: Dict
-    ) -> str:
-        """
-        Front matter title block.
-
-        The template already has a title page with {{BOOK_TITLE}}, so we emit
-        a LaTeX comment. If the template's title page is removed in the future,
-        this handler can be updated to render the title directly.
-        """
-        return "% front_matter_title: handled by template title page"
-
-    def _render_front_matter_copyright(
-        self, block: Dict[str, Any], ctx: Dict
-    ) -> str:
-        """
-        Copyright notice text from the manuscript.
-
-        The template already has a copyright page with boilerplate. This renders
-        any additional copyright text the author included in their manuscript.
-        """
-        text = self._render_spans(block)
-        if not text.strip():
-            return "% front_matter_copyright: empty"
-        # Render as small text on the copyright page area
-        return (
-            f"\\begin{{flushleft}}\n"
-            f"\\small\n"
-            f"{text}\n"
-            f"\\end{{flushleft}}\n"
-            f"\\clearpage"
-        )
-
-    def _render_front_matter_dedication(
-        self, block: Dict[str, Any], ctx: Dict
-    ) -> str:
-        """Dedication: centered text (italic applied via spans), then page break."""
-        text = self._render_spans(block)
-        return (
-            f"\\vspace*{{\\fill}}\n"
-            f"\\begin{{center}}\n"
-            f"{text}\n"
-            f"\\end{{center}}\n"
-            f"\\vspace*{{\\fill}}\n"
-            f"\\clearpage"
-        )
-
-    def _render_toc_marker(
-        self, block: Dict[str, Any], ctx: Dict
-    ) -> str:
-        """
-        Table of contents marker.
-
-        The template controls whether TOC is included. This is a no-op
-        placeholder that acknowledges the marker exists.
-        """
-        return "% toc_marker: TOC placement handled by template"
-
-    def _render_chapter_heading(
-        self, block: Dict[str, Any], ctx: Dict
-    ) -> str:
-        """Chapter heading — numbered or unnumbered."""
-        meta = block.get("meta", {})
-        chapter_num = meta.get("chapter_number")
-        title = self._render_spans_plain(block)
-
-        if chapter_num is not None and chapter_num > 0:
-            # Numbered chapter: \chapter{Title}
-            return f"\\chapter{{{title}}}"
+        spans = block.get("spans")
+        if isinstance(spans, list) and spans:
+            text = "".join(s.get("text", "") for s in spans if isinstance(s, dict))
         else:
-            # Unnumbered chapter (prologue, epilogue, etc.)
+            text = block.get("text", "") or ""
+        return self._escape(text)
+
+    # -- Role handlers ------------------------------------------------------
+
+    def _render_title_page(self, block: Dict[str, Any], ctx: Dict[str, Any]) -> str:
+        """Title-page cluster members. The system-generated title page in
+        the LaTeX template handles {{BOOK_TITLE}} / {{AUTHOR_NAME}}; the
+        author-supplied cluster does not need to render again per H-001's
+        decision (which W2 sees on applied_rules[]). Emit a comment so
+        the source .tex remains traceable.
+        """
+        return f"% title_page block {block.get('id')} (suppressed; template owns the title page)"
+
+    def _render_front_matter(self, block: Dict[str, Any], ctx: Dict[str, Any]) -> str:
+        """Front-matter heading + (optional) body. Subtype steers the
+        layout: dedication → centered italic; copyright → small flushleft;
+        anything else → unnumbered chapter-style.
+        """
+        subtype = (block.get("subtype") or "generic").lower()
+        title = self._plain(block)
+        text_body = title  # v1.3: front_matter blocks are heading-shaped.
+
+        if subtype == "dedication":
+            return (
+                "\\vspace*{\\fill}\n"
+                "\\begin{center}\n"
+                f"\\textit{{{text_body}}}\n"
+                "\\end{center}\n"
+                "\\vspace*{\\fill}\n"
+                "\\clearpage"
+            )
+        if subtype == "copyright":
+            return (
+                "\\thispagestyle{empty}\n"
+                "\\vspace*{\\fill}\n"
+                "\\begin{flushleft}\n"
+                "\\small\n"
+                f"{text_body}\n"
+                "\\end{flushleft}\n"
+                "\\clearpage"
+            )
+        # generic / preface / foreword / introduction / note_to_reader / etc.
+        return (
+            f"\\chapter*{{{text_body}}}\n"
+            f"\\addcontentsline{{toc}}{{chapter}}{{{text_body}}}"
+        )
+
+    def _render_part_divider(self, block: Dict[str, Any], ctx: Dict[str, Any]) -> str:
+        """Part divider. Per I-5 always carries force_page_break: true.
+        We honor that explicitly here so the page break is visible at
+        the rendered-source level, not buried inside titlesec config.
+        """
+        title = self._escape(block.get("part_title") or "")
+        force_break = block.get("force_page_break", True)
+        prefix = "\\clearpage\n" if force_break else ""
+        return f"{prefix}\\part*{{{title}}}\n\\addcontentsline{{toc}}{{part}}{{{title}}}"
+
+    def _render_chapter_heading(self, block: Dict[str, Any], ctx: Dict[str, Any]) -> str:
+        """v2 chapter heading: chapter_number + chapter_title are
+        separate fields. Numbered chapters get \\chapter (LaTeX auto-
+        prefixes "CHAPTER N" via the template's titlesec config);
+        unnumbered chapters get \\chapter* + a TOC line.
+
+        This is where the doubled-chapter bug dies: chapter_title is
+        the title alone, never "Chapter N\\nTitle".
+        """
+        title = self._escape(block.get("chapter_title") or "")
+        chapter_number = block.get("chapter_number")
+        if chapter_number is None:
             return (
                 f"\\chapter*{{{title}}}\n"
                 f"\\addcontentsline{{toc}}{{chapter}}{{{title}}}"
             )
+        return f"\\chapter{{{title}}}"
 
-    def _render_heading(
-        self, block: Dict[str, Any], ctx: Dict
-    ) -> str:
-        """Sub-heading (level 2–4)."""
-        meta = block.get("meta", {})
-        level = meta.get("level", 2)
-        title = self._render_spans_plain(block)
-
-        if level == 2:
-            return f"\\section*{{{title}}}"
-        elif level == 3:
-            return f"\\subsection*{{{title}}}"
-        elif level == 4:
-            return f"\\subsubsection*{{{title}}}"
-        else:
-            return f"\\section*{{{title}}}"
-
-    def _render_paragraph(
-        self, block: Dict[str, Any], ctx: Dict
-    ) -> str:
-        """Body paragraph — the most common block type."""
+    def _render_body_paragraph(self, block: Dict[str, Any], ctx: Dict[str, Any]) -> str:
         return self._render_spans(block)
 
-    def _render_blockquote(
-        self, block: Dict[str, Any], ctx: Dict
-    ) -> str:
-        """Block quotation."""
-        text = self._render_spans(block)
-        return (
-            f"\\begin{{quotation}}\n"
-            f"{text}\n"
-            f"\\end{{quotation}}"
-        )
-
-    def _render_list_item(
-        self, block: Dict[str, Any], ctx: Dict
-    ) -> str:
-        """
-        Single list item.
-
-        List grouping (begin/end itemize/enumerate) is handled by the
-        convert() method's list group tracking, not here.
-        """
-        text = self._render_spans(block)
-        return f"  \\item {text}"
-
-    def _render_scene_break(
-        self, block: Dict[str, Any], ctx: Dict
-    ) -> str:
-        """Scene break (visual separator)."""
+    def _render_scene_break(self, block: Dict[str, Any], ctx: Dict[str, Any]) -> str:
         return "\\scenebreak"
 
-    def _render_horizontal_rule(
-        self, block: Dict[str, Any], ctx: Dict
-    ) -> str:
-        """Horizontal rule."""
+    def _render_back_matter(self, block: Dict[str, Any], ctx: Dict[str, Any]) -> str:
+        """Unnumbered chapter-style heading + TOC line. Same shape as a
+        front_matter generic heading; subtype is informational only.
+        """
+        title = self._plain(block)
         return (
-            "\\par\\vspace{\\baselineskip}\n"
-            "\\noindent\\rule{\\textwidth}{0.4pt}\n"
-            "\\par\\vspace{\\baselineskip}"
+            f"\\chapter*{{{title}}}\n"
+            f"\\addcontentsline{{toc}}{{chapter}}{{{title}}}"
         )
 
-    def _render_page_break(
-        self, block: Dict[str, Any], ctx: Dict
-    ) -> str:
-        """Forced page break."""
-        return "\\clearpage"
-
-    def _render_back_matter_about_author(
-        self, block: Dict[str, Any], ctx: Dict
-    ) -> str:
+    def _render_heading(self, block: Dict[str, Any], ctx: Dict[str, Any]) -> str:
+        """Generic sub-section heading. Maps heading_level → LaTeX
+        sectioning command:
+          1 → \\chapter*  (rare for role=heading; L1 usually classifies)
+          2 → \\section*  (rare for role=heading; L2 = chapter usually)
+          3 → \\subsection*
+          4+ → \\subsubsection*
         """
-        About the Author section.
+        title = self._plain(block)
+        level = int(block.get("heading_level") or 3)
+        cmd = {1: "\\chapter*", 2: "\\section*", 3: "\\subsection*"}.get(
+            level, "\\subsubsection*"
+        )
+        return f"{cmd}{{{title}}}"
 
-        First occurrence gets a chapter heading; subsequent blocks in the
-        same section are rendered as body paragraphs.
+    def _render_list_item(self, block: Dict[str, Any], ctx: Dict[str, Any]) -> str:
+        """Single \\item. Wrapping is handled by _ListState in convert()."""
+        body = self._render_spans(block)
+        return f"  \\item {body}"
+
+    def _render_blockquote(self, block: Dict[str, Any], ctx: Dict[str, Any]) -> str:
+        body = self._render_spans(block)
+        if ctx.get("degraded"):
+            return f"\\begin{{quote}}\n{body}\n\\end{{quote}}"
+        return f"\\begin{{quotation}}\n{body}\n\\end{{quotation}}"
+
+    def _render_table(self, block: Dict[str, Any], ctx: Dict[str, Any]) -> str:
+        """v1.3 placeholder. Doc 22 v1.0.2 defers table-internal
+        structure to the schema; once schema firms up rows/cells, this
+        handler renders to tabular. For now, emit a visible placeholder
+        so operators see where tables would land.
         """
-        text = self._render_spans(block)
-        if not ctx.get("seen_about_author"):
-            return (
-                f"\\chapter*{{About the Author}}\n"
-                f"\\addcontentsline{{toc}}{{chapter}}{{About the Author}}\n"
-                f"{text}"
-            )
+        return (
+            "\\begin{center}\n"
+            "[Table placeholder — see Doc 22 v1.0.2 §CIR Block Structure]\n"
+            "\\end{center}"
+        )
+
+    def _render_image(self, block: Dict[str, Any], ctx: Dict[str, Any]) -> str:
+        """v1.3 placeholder. Image extraction is a Layer 5 concern in
+        Doc 22; for now, emit a visible placeholder.
+        """
+        return (
+            "\\begin{center}\n"
+            "[Image placeholder]\n"
+            "\\end{center}"
+        )
+
+    def _render_code_block(self, block: Dict[str, Any], ctx: Dict[str, Any]) -> str:
+        """Verbatim code rendering. Spans are flattened to plain text
+        because verbatim doesn't process inline marks.
+        """
+        text = ""
+        spans = block.get("spans")
+        if isinstance(spans, list) and spans:
+            text = "".join(s.get("text", "") for s in spans if isinstance(s, dict))
         else:
-            return text
+            text = block.get("text", "") or ""
+        return f"\\begin{{verbatim}}\n{text}\n\\end{{verbatim}}"
 
-    def _render_back_matter_also_by(
-        self, block: Dict[str, Any], ctx: Dict
-    ) -> str:
+    def _render_footnote(self, block: Dict[str, Any], ctx: Dict[str, Any]) -> str:
+        """v1.3 emits footnote content as a flush-left small block.
+        Proper \\footnote{} wiring requires the footnote_ref linkage
+        from the producer, which v1 readers don't synthesize. Tracked
+        on the v1.1 punchlist.
         """
-        Also By section.
+        body = self._render_spans(block)
+        return f"\\begin{{flushleft}}\n\\small\n{body}\n\\end{{flushleft}}"
 
-        First occurrence gets a chapter heading; subsequent blocks are body text.
+    def _render_structural(self, block: Dict[str, Any], ctx: Dict[str, Any]) -> str:
+        """role=structural is the catch-all for layout-only blocks
+        (page_break, horizontal_rule, toc_marker upgraded from v1).
+        Dispatch on the underlying CIR type.
         """
-        text = self._render_spans(block)
-        if not ctx.get("seen_also_by"):
+        cir_type = block.get("type")
+        if cir_type == "page_break":
+            return "\\clearpage"
+        if cir_type == "horizontal_rule":
             return (
-                f"\\chapter*{{Also By}}\n"
-                f"\\addcontentsline{{toc}}{{chapter}}{{Also By}}\n"
-                f"{text}"
+                "\\par\\vspace{\\baselineskip}\n"
+                "\\noindent\\rule{\\textwidth}{0.4pt}\n"
+                "\\par\\vspace{\\baselineskip}"
             )
-        else:
-            return text
+        # toc_marker (v1 upgrade) — let the template's TOC handle this.
+        # Emit a comment for traceability.
+        return f"% structural block {block.get('id')} (CIR type={cir_type!r})"
+
+
+# ---------------------------------------------------------------------------
+# List grouping state machine
+# ---------------------------------------------------------------------------
+
+class _ListEnvTransition:
+    __slots__ = ("close_prev", "open_new")
+    def __init__(self, close_prev: Optional[str] = None, open_new: Optional[str] = None):
+        self.close_prev = close_prev
+        self.open_new = open_new
+
+
+class _ListState:
+    """Tracks the open list environment across consecutive list_item
+    blocks. Wraps runs of list_item-role blocks in itemize / enumerate;
+    closes the wrap when a non-list_item block (or a block with a
+    different list_ordered value) shows up.
+    """
+
+    def __init__(self):
+        self.open_env: Optional[str] = None  # "itemize" | "enumerate" | None
+
+    def transition(self, block: Dict[str, Any], role: str) -> _ListEnvTransition:
+        if role != "list_item":
+            if self.open_env is not None:
+                close = self.open_env
+                self.open_env = None
+                return _ListEnvTransition(close_prev=close)
+            return _ListEnvTransition()
+
+        # list_item block.
+        wanted_env = "enumerate" if block.get("list_ordered") else "itemize"
+        if self.open_env == wanted_env:
+            return _ListEnvTransition()  # already open in the right kind
+        if self.open_env is not None:
+            # Switching kind — close the prior, open the new.
+            close = self.open_env
+            self.open_env = wanted_env
+            return _ListEnvTransition(close_prev=close, open_new=wanted_env)
+        # Not in a list — open one.
+        self.open_env = wanted_env
+        return _ListEnvTransition(open_new=wanted_env)

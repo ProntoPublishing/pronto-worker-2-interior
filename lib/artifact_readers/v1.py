@@ -181,6 +181,15 @@ def _upgrade_block(blk: Dict[str, Any]) -> Dict[str, Any]:
         out["title"] = _block_text(blk)
     elif role == "part_divider":
         out["force_page_break"] = True  # I-5 (no v1 type maps here, but defensive)
+    elif role == "list_item":
+        # v1 list blocks may carry meta.list_type ∈ {"ordered","unordered"}.
+        # Preserve as a top-level boolean so the v2 converter can pick
+        # itemize vs enumerate. v2 native producers (W1 v5.0) currently
+        # default this to False; the field formalizes when list ordering
+        # becomes a v2 producer concern.
+        v1_meta = blk.get("meta") or {}
+        if v1_meta.get("list_type") == "ordered":
+            out["list_ordered"] = True
 
     if notes:
         out["classification_notes"] = notes

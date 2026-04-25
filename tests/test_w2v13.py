@@ -400,5 +400,306 @@ class Test_V2Reader(unittest.TestCase):
             read_artifact(art)
 
 
+# ---------------------------------------------------------------------------
+# Iter 3 — v2-native blocks-to-LaTeX converter
+# ---------------------------------------------------------------------------
+
+from lib.blocks_to_latex import BlocksToLatexConverter, ROLES
+
+
+class Test_ConverterCoverage(unittest.TestCase):
+
+    def test_every_role_has_a_handler(self):
+        c = BlocksToLatexConverter()
+        self.assertEqual(set(c.HANDLER_MAP.keys()), set(ROLES))
+
+    def test_init_refuses_partial_coverage(self):
+        """If someone removes a handler from HANDLER_MAP, __init__ must
+        fail loudly per the contract-first design.
+        """
+        class Broken(BlocksToLatexConverter):
+            HANDLER_MAP = {k: v for k, v in BlocksToLatexConverter.HANDLER_MAP.items()
+                           if k != "chapter_heading"}
+        with self.assertRaises(RuntimeError) as cm:
+            Broken()
+        self.assertIn("chapter_heading", str(cm.exception))
+
+
+class Test_ConverterChapterHeading(unittest.TestCase):
+    """The doubled-chapter bug from The Long Quiet dies here. With
+    chapter_number and chapter_title separated, \\chapter{title} carries
+    only the title; the template's titlesec config provides "CHAPTER N".
+    No prefix-in-title duplication.
+    """
+
+    def setUp(self):
+        self.c = BlocksToLatexConverter()
+
+    def test_numbered_chapter_uses_chapter_command(self):
+        block = {
+            "id": "b_000001", "type": "heading", "heading_level": 2,
+            "role": "chapter_heading",
+            "chapter_number": 1,
+            "chapter_title": "What Depression Actually Is",
+        }
+        out = self.c.convert([block], params={})
+        self.assertIn("\\chapter{What Depression Actually Is}", out)
+        # Critical: the title alone, not "Chapter 1\nWhat Depression..."
+        self.assertNotIn("Chapter 1\\nWhat", out)
+        self.assertNotIn("Chapter 1 What", out)
+
+    def test_null_chapter_number_uses_chapter_star(self):
+        block = {
+            "id": "b_000001", "type": "heading", "heading_level": 2,
+            "role": "chapter_heading",
+            "chapter_number": None,
+            "chapter_title": "Prologue",
+        }
+        out = self.c.convert([block], params={})
+        self.assertIn("\\chapter*{Prologue}", out)
+        self.assertIn("\\addcontentsline{toc}{chapter}{Prologue}", out)
+
+
+class Test_ConverterPartDivider(unittest.TestCase):
+
+    def test_part_divider_clears_page_then_emits_part(self):
+        """I-5: part_divider always carries force_page_break: true.
+        The converter honors it explicitly with \\clearpage so the
+        rendered .tex shows the break in source.
+        """
+        block = {
+            "id": "b_000001", "type": "heading", "heading_level": 1,
+            "role": "part_divider",
+            "part_number": 1, "part_title": "Understanding",
+            "force_page_break": True,
+        }
+        out = BlocksToLatexConverter().convert([block], params={})
+        # \clearpage precedes \part*
+        cp_idx = out.index("\\clearpage")
+        part_idx = out.index("\\part*{Understanding}")
+        self.assertLess(cp_idx, part_idx)
+        self.assertIn("\\addcontentsline{toc}{part}{Understanding}", out)
+
+
+class Test_ConverterFrontBackMatter(unittest.TestCase):
+
+    def setUp(self):
+        self.c = BlocksToLatexConverter()
+
+    def test_dedication_renders_centered_italic_with_clearpage(self):
+        block = {
+            "id": "b_000001", "type": "paragraph",
+            "role": "front_matter", "subtype": "dedication",
+            "title": "For everyone.",
+            "spans": [{"text": "For everyone.", "marks": []}],
+        }
+        out = self.c.convert([block], params={})
+        self.assertIn("\\begin{center}", out)
+        self.assertIn("\\textit{For everyone.}", out)
+        self.assertIn("\\clearpage", out)
+
+    def test_copyright_renders_flushleft_small(self):
+        block = {
+            "id": "b_000001", "type": "paragraph",
+            "role": "front_matter", "subtype": "copyright",
+            "title": "Copyright 2026 by Author.",
+            "spans": [{"text": "Copyright 2026 by Author.", "marks": []}],
+        }
+        out = self.c.convert([block], params={})
+        self.assertIn("\\begin{flushleft}", out)
+        self.assertIn("\\small", out)
+
+    def test_generic_front_matter_uses_chapter_star(self):
+        block = {
+            "id": "b_000001", "type": "heading", "heading_level": 1,
+            "role": "front_matter", "subtype": "note_to_reader",
+            "title": "A Note Before You Begin",
+            "spans": [{"text": "A Note Before You Begin", "marks": []}],
+        }
+        out = self.c.convert([block], params={})
+        self.assertIn("\\chapter*{A Note Before You Begin}", out)
+        self.assertIn("\\addcontentsline{toc}{chapter}{A Note Before You Begin}", out)
+
+    def test_back_matter_renders_chapter_star_with_toc(self):
+        block = {
+            "id": "b_000001", "type": "heading", "heading_level": 1,
+            "role": "back_matter", "subtype": "about_the_author",
+            "title": "About the Author",
+            "spans": [{"text": "About the Author", "marks": []}],
+        }
+        out = self.c.convert([block], params={})
+        self.assertIn("\\chapter*{About the Author}", out)
+
+
+class Test_ConverterListGrouping(unittest.TestCase):
+
+    def setUp(self):
+        self.c = BlocksToLatexConverter()
+
+    def test_consecutive_unordered_list_items_wrap_in_itemize(self):
+        blocks = [
+            {"id": "b_001", "type": "list_item", "role": "list_item",
+             "spans": [{"text": "First", "marks": []}]},
+            {"id": "b_002", "type": "list_item", "role": "list_item",
+             "spans": [{"text": "Second", "marks": []}]},
+            {"id": "b_003", "type": "paragraph", "role": "body_paragraph",
+             "spans": [{"text": "After.", "marks": []}]},
+        ]
+        out = self.c.convert(blocks, params={})
+        self.assertIn("\\begin{itemize}", out)
+        self.assertIn("\\end{itemize}", out)
+        # Wrap closes BEFORE the body paragraph.
+        self.assertLess(out.index("\\end{itemize}"), out.index("After."))
+        self.assertIn("\\item First", out)
+        self.assertIn("\\item Second", out)
+
+    def test_ordered_list_items_use_enumerate(self):
+        blocks = [
+            {"id": "b_001", "type": "list_item", "role": "list_item",
+             "list_ordered": True,
+             "spans": [{"text": "Step 1", "marks": []}]},
+            {"id": "b_002", "type": "list_item", "role": "list_item",
+             "list_ordered": True,
+             "spans": [{"text": "Step 2", "marks": []}]},
+        ]
+        out = self.c.convert(blocks, params={})
+        self.assertIn("\\begin{enumerate}", out)
+        self.assertIn("\\end{enumerate}", out)
+        self.assertNotIn("\\begin{itemize}", out)
+
+    def test_switching_ordering_closes_and_reopens(self):
+        blocks = [
+            {"id": "b_001", "type": "list_item", "role": "list_item",
+             "spans": [{"text": "Bullet", "marks": []}]},
+            {"id": "b_002", "type": "list_item", "role": "list_item",
+             "list_ordered": True,
+             "spans": [{"text": "Number", "marks": []}]},
+        ]
+        out = self.c.convert(blocks, params={})
+        self.assertIn("\\begin{itemize}", out)
+        self.assertIn("\\end{itemize}", out)
+        self.assertIn("\\begin{enumerate}", out)
+        self.assertIn("\\end{enumerate}", out)
+        # itemize ends before enumerate begins.
+        self.assertLess(out.index("\\end{itemize}"), out.index("\\begin{enumerate}"))
+
+    def test_list_at_end_of_document_is_closed(self):
+        blocks = [
+            {"id": "b_001", "type": "list_item", "role": "list_item",
+             "spans": [{"text": "Last item", "marks": []}]},
+        ]
+        out = self.c.convert(blocks, params={})
+        self.assertIn("\\end{itemize}", out)
+
+
+class Test_ConverterSpansAndEscaping(unittest.TestCase):
+
+    def setUp(self):
+        self.c = BlocksToLatexConverter()
+
+    def test_body_paragraph_renders_marks(self):
+        block = {
+            "id": "b_001", "type": "paragraph", "role": "body_paragraph",
+            "spans": [
+                {"text": "It was a ", "marks": []},
+                {"text": "dark", "marks": ["italic"]},
+                {"text": " and ", "marks": []},
+                {"text": "stormy", "marks": ["bold"]},
+                {"text": " night.", "marks": []},
+            ],
+        }
+        out = self.c.convert([block], params={})
+        self.assertIn("\\textit{dark}", out)
+        self.assertIn("\\textbf{stormy}", out)
+
+    def test_special_chars_escape_outside_marks(self):
+        """C3 fix from the contract-v1.1 work: every span's text is
+        escaped before mark-wrapping, so unmarked $/%/& don't slip
+        through into LaTeX command position.
+        """
+        block = {
+            "id": "b_001", "type": "paragraph", "role": "body_paragraph",
+            "spans": [
+                {"text": "$100 & 50% off", "marks": []},
+            ],
+        }
+        out = self.c.convert([block], params={})
+        self.assertIn(r"\$100 \& 50\% off", out)
+
+    def test_special_chars_escape_inside_marked_span(self):
+        block = {
+            "id": "b_001", "type": "paragraph", "role": "body_paragraph",
+            "spans": [
+                {"text": "$pricey", "marks": ["italic"]},
+            ],
+        }
+        out = self.c.convert([block], params={})
+        self.assertIn(r"\textit{\$pricey}", out)
+
+
+class Test_ConverterStructural(unittest.TestCase):
+
+    def setUp(self):
+        self.c = BlocksToLatexConverter()
+
+    def test_page_break_renders_clearpage(self):
+        block = {"id": "b_001", "type": "page_break", "role": "structural"}
+        out = self.c.convert([block], params={})
+        self.assertIn("\\clearpage", out)
+
+    def test_horizontal_rule_renders_rule(self):
+        block = {"id": "b_001", "type": "horizontal_rule", "role": "structural"}
+        out = self.c.convert([block], params={})
+        self.assertIn("\\rule{", out)
+
+    def test_scene_break_uses_template_command(self):
+        block = {"id": "b_001", "type": "paragraph", "role": "scene_break"}
+        out = self.c.convert([block], params={})
+        self.assertIn("\\scenebreak", out)
+
+
+class Test_ConverterEndToEndAcrossUpgrade(unittest.TestCase):
+    """Upgrade a v1.0 artifact through read_artifact() and feed the
+    blocks to the converter. Verifies the dispatcher → upgrader →
+    converter chain is consistent end-to-end.
+    """
+
+    def test_v1_artifact_yields_clean_chapter_no_doubling(self):
+        v1_artifact = _minimal_v1_artifact([
+            {"id": "b_000013", "type": "chapter_heading",
+             "text": "Chapter 1\nWhat Depression Actually Is",
+             "meta": {"chapter_number": 1}},
+            {"id": "b_000014", "type": "paragraph",
+             "text": "Before anything else, it helps to be clear..."},
+        ])
+        upgraded = read_artifact(v1_artifact)
+        out = BlocksToLatexConverter().convert(
+            upgraded["content"]["blocks"], params={}
+        )
+        # The upgraded artifact has chapter_title="What Depression Actually Is"
+        # alone. The converter emits \chapter{What Depression Actually Is}.
+        # No "Chapter 1\nWhat" anywhere — that's the doubled-chapter bug
+        # being structurally impossible.
+        self.assertIn("\\chapter{What Depression Actually Is}", out)
+        self.assertNotIn("Chapter 1\\n", out)
+        self.assertNotIn("Chapter 1 What", out)
+
+    def test_v1_list_with_meta_list_type_renders_enumerate(self):
+        v1_artifact = _minimal_v1_artifact([
+            {"id": "b_001", "type": "list",
+             "text": "First step",
+             "meta": {"list_type": "ordered", "list_group": 1}},
+            {"id": "b_002", "type": "list",
+             "text": "Second step",
+             "meta": {"list_type": "ordered", "list_group": 1}},
+        ])
+        upgraded = read_artifact(v1_artifact)
+        out = BlocksToLatexConverter().convert(
+            upgraded["content"]["blocks"], params={}
+        )
+        self.assertIn("\\begin{enumerate}", out)
+        self.assertIn("\\end{enumerate}", out)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
