@@ -43,7 +43,7 @@ from uuid import uuid4
 
 from lib.pronto_r2_client import ProntoR2Client
 from lib.artifact_downloader import ArtifactDownloader
-from lib.artifact_validator import validate_artifact
+from lib.artifact_readers import read_artifact, UnsupportedSchemaVersionError
 from lib.warning_handler import WarningHandler, ProcessingDecision
 from lib.blocks_to_latex import BlocksToLatexConverter
 from lib.pdf_generator import PDFGenerator
@@ -56,6 +56,37 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+
+def _system_title_page_latex(artifact: Dict[str, Any]) -> str:
+    """Build the {{SYSTEM_TITLE_PAGE}} substitution.
+
+    When the artifact's applied_rules[] carries an H-001 entry, the
+    system-generated title page is suppressed (the author supplied
+    one, and the converter's title_page handler renders it). Otherwise
+    the standard system title page block is emitted, with
+    {{BOOK_TITLE}} / {{AUTHOR_NAME}} substituted by the next
+    template-fill step.
+    """
+    h001_fired = any(
+        r.get("rule") == "H-001"
+        for r in (artifact.get("applied_rules") or [])
+    )
+    if h001_fired:
+        return (
+            "% System title page suppressed by H-001\n"
+            "% (author supplied a title page; converter renders it from\n"
+            "% title_page-role blocks)."
+        )
+    return (
+        "\\begin{titlepage}\n"
+        "    \\centering\n"
+        "    \\vspace*{2in}\n"
+        "    {\\Huge\\textbf{{{BOOK_TITLE}}}}\\\\[1em]\n"
+        "    {\\Large {{AUTHOR_NAME}}}\n"
+        "    \\vfill\n"
+        "\\end{titlepage}"
+    )
 
 
 class InteriorProcessor:
@@ -139,22 +170,27 @@ class InteriorProcessor:
             params = self._get_formatting_parameters(service)
             logger.info(f"[{run_id}] Formatting parameters: {params}")
             
-            # Step 5: Download and validate manuscript artifact
-            artifact = self.artifact_downloader.download(manuscript_artifact_url)
-            
-            validation_result = validate_artifact(
-                artifact,
-                artifact_type="manuscript",
-                schema_version="1.0"
+            # Step 5: Download artifact (any supported schema version)
+            # and dispatch through the parallel reader. The reader
+            # detects schema_version and either upgrades a v1.0/v1.1
+            # artifact to v2.0 shape in-memory (v1 reader) or passes a
+            # v2.0 artifact through with defensive shape checks (v2
+            # reader). Downstream code only ever sees v2.0 shape.
+            raw_artifact = self.artifact_downloader.download(manuscript_artifact_url)
+            try:
+                artifact = read_artifact(raw_artifact)
+            except UnsupportedSchemaVersionError as e:
+                raise ValueError(f"Unsupported manuscript schema: {e}")
+
+            logger.info(
+                f"[{run_id}] Artifact normalized to v2.0 shape "
+                f"(source schema_version={raw_artifact.get('schema_version')!r})"
             )
-            
-            if not validation_result['valid']:
-                raise ValueError(f"Invalid artifact: {validation_result['errors']}")
-            
-            logger.info(f"[{run_id}] Artifact validated successfully")
-            
-            # Step 6: Check warnings and decide processing strategy
-            warnings = artifact.get('analysis', {}).get('warnings', [])
+
+            # Step 6: Check warnings and decide processing strategy.
+            # v2.0 artifacts carry warnings at top level; v1 reader
+            # promotes legacy analysis.warnings[] into the same shape.
+            warnings = artifact.get('warnings', [])
             decision = self.warning_handler.evaluate(warnings)
             
             logger.info(f"[{run_id}] Warning decision: {decision.action}")
@@ -190,9 +226,27 @@ class InteriorProcessor:
             requested_font = params.get("font", "Garamond")
             actual_font = font_map.get(requested_font, "EB Garamond")
             
+            # H-001 conditional: if the artifact's applied_rules[] carries
+            # an H-001 entry (Layer 5 author-supplied-title-page decision),
+            # the system-generated title page is suppressed and the
+            # author's title_page-role blocks render in its place via
+            # the converter. Otherwise the standard system title page
+            # block is substituted.
+            system_title_page = _system_title_page_latex(artifact)
+
+            # Replace the body placeholder with count=1 explicitly. latex_body
+            # is a multi-line string containing the entire book; any second
+            # occurrence of the {{CONTENT}} marker in the template — including
+            # one inside a LaTeX comment — would cause Python's str.replace()
+            # to substitute the body there as well, and the multi-line content
+            # would break out of the '%' comment at its first newline and
+            # render as a duplicate copy of the book. Templates should never
+            # carry a second {{CONTENT}} literal; this count=1 is defense in
+            # depth.
             latex_content = (
                 template
-                .replace("{{CONTENT}}", latex_body)
+                .replace("{{CONTENT}}", latex_body, 1)
+                .replace("{{SYSTEM_TITLE_PAGE}}", system_title_page, 1)
                 .replace("{{BOOK_TITLE}}", params.get("book_title", ""))
                 .replace("{{AUTHOR_NAME}}", params.get("author_name", ""))
                 .replace("{{FONT_NAME}}", actual_font)

@@ -135,14 +135,17 @@
 \frontmatter
 \pagestyle{plain}
 
-% Title page
-\begin{titlepage}
-    \centering
-    \vspace*{2in}
-    {\Huge\textbf{{{BOOK_TITLE}}}}\\[1em]
-    {\Large {{AUTHOR_NAME}}}
-    \vfill
-\end{titlepage}
+% Title page is H-001-conditional. pronto_worker_2.py fills the
+% placeholder on the next line: when H-001 fired (author supplied a
+% title page; system one suppressed) the placeholder becomes a
+% suppression comment. Otherwise it becomes the standard system
+% title page block, with the book title and author name substituted
+% in the next template-fill step. Do NOT reference the placeholder
+% literal in this comment — Python's str.replace() substitutes every
+% occurrence and the multi-line replacement breaks out of '%' at its
+% first newline. count=1 in the worker is the defense; this comment
+% wording is the second layer.
+{{SYSTEM_TITLE_PAGE}}
 
 % Copyright page
 \thispagestyle{empty}
@@ -176,6 +179,10 @@ ISBN: {{ISBN}}
 
 \backmatter
 
-% About the Author, Also By, etc. are included in {{CONTENT}}
+% Back-matter blocks (About the Author, Also By, etc.) are produced by
+% Worker 1 and emitted as part of the body content above. Do not
+% reference the template content placeholder literally in comments: a
+% stray literal here would be substituted with the full body during
+% template fill, rendering the book twice.
 
 \end{document}
