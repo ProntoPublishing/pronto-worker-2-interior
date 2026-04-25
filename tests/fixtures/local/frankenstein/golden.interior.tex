@@ -147,23 +147,44 @@
 \frontmatter
 \pagestyle{plain}
 
-% Title page is H-001-conditional. pronto_worker_2.py fills the
-% placeholder on the next line: when H-001 fired (author supplied a
-% title page; system one suppressed) the placeholder becomes a
-% suppression comment. Otherwise it becomes the standard system
-% title page block, with the book title and author name substituted
-% in the next template-fill step. Do NOT reference the placeholder
-% literal in this comment — Python's str.replace() substitutes every
-% occurrence and the multi-line replacement breaks out of '%' at its
-% first newline. count=1 in the worker is the defense; this comment
-% wording is the second layer.
-\begin{titlepage}
-    \centering
-    \vspace*{2in}
-    {\Huge\textbf{Local Run}}\\[1em]
-    {\Large Local Run}
-    \vfill
-\end{titlepage}
+% ============================================================================
+% HALF-TITLE PAGE (Doc 23 R-2.1)
+% ============================================================================
+%
+% Recto page, book title only, vertically centered. The placeholder
+% on the next line is filled by lib.title_page.render_half_title_page_latex
+% which wraps the content with \cleardoublepage on both sides:
+% leading to land the half-title on a recto, trailing so the
+% subsequent title page also lands on a recto.
+
+\cleardoublepage
+\thispagestyle{empty}
+\vspace*{\fill}
+\begin{center}
+{\Huge\textbf{Local Run}}
+\end{center}
+\vspace*{\fill}
+\cleardoublepage
+
+% ============================================================================
+% TITLE PAGE (Doc 23 R-2.2)
+% ============================================================================
+%
+% Title / subtitle / author from the manuscript_meta -> params fallback
+% chain. If neither source supplies a title, lib.title_page raises
+% TitlePageMissingError and the Service fails (R-2.2 mandate). The
+% placeholder name stays as SYSTEM_TITLE_PAGE for back-compat with PR
+% history; the H-001-conditional logic that lived here in Bucket A is
+% superseded by the fallback chain.
+
+\thispagestyle{empty}
+\vspace*{2in}
+\begin{center}
+{\Huge\textbf{Local Run}}\\[1em]
+{\large Local Run}
+\end{center}
+\vfill
+\clearpage
 
 % Copyright page
 \thispagestyle{empty}

@@ -362,56 +362,25 @@ class BlocksToLatexConverter:
     # -- Role handlers ------------------------------------------------------
 
     def _render_title_page(self, block: Dict[str, Any], ctx: Dict[str, Any]) -> str:
-        """Render an author-supplied title-page cluster member.
+        """No-op handler — title_page blocks are consumed upstream.
 
-        Each cluster block is centered. The first one (positional role
-        "title" per C-003's classification_notes) is rendered larger;
-        subsequent blocks (subtitle, byline) progressively smaller.
-        Falls back to a single sizing if the positional tag is absent.
+        Per Doc 23 R-2.2 (Bucket B.2), title_page-role blocks don't
+        render here; their text was extracted into manuscript_meta
+        during W1's classify phase (C-003), and the template-fill
+        layer reads from manuscript_meta to build the system title
+        page (lib.title_page.render_title_page_latex). Re-rendering
+        the raw blocks would produce a duplicate title page.
 
-        The decision of whether the system title page from the template
-        is suppressed in favor of these blocks lives at the template-fill
-        layer (pronto_worker_2.py reads applied_rules[] for an H-001
-        entry). This handler only renders the author cluster; it does
-        not coordinate with the system title page.
+        The handler is retained because BlocksToLatexConverter's
+        __init__ requires HANDLER_MAP coverage for every role in
+        ROLES (the deployment guard). _partition_front_matter drops
+        title_page blocks before convert() iterates, so this handler
+        is unreachable in practice. If a producer ever bypasses the
+        partition (e.g. a future schema variant), the no-op fallback
+        preserves the contract that title_page blocks don't double
+        the rendered title page.
         """
-        text = self._render_spans(block)
-        if not text:
-            return ""
-
-        # Positional sub-role from classification_notes; absent on v1
-        # synthesized title_page blocks.
-        notes = block.get("classification_notes") or []
-        positional = ""
-        for n in notes:
-            if "positional role:" in n:
-                positional = n.split(":", 1)[-1].strip().lower()
-                break
-
-        if positional == "title" or not positional:
-            # Title (or unknown — assume primary).
-            return (
-                "\\begin{center}\n"
-                "\\vspace*{1in}\n"
-                f"{{\\Huge\\textbf{{{text}}}}}\n"
-                "\\end{center}\n"
-                "\\vspace{1em}"
-            )
-        if positional == "subtitle":
-            return (
-                "\\begin{center}\n"
-                f"{{\\Large {text}}}\n"
-                "\\end{center}\n"
-                "\\vspace{1em}"
-            )
-        # author_or_byline / anything else.
-        return (
-            "\\begin{center}\n"
-            f"{{\\large {text}}}\n"
-            "\\end{center}\n"
-            "\\vfill\n"
-            "\\clearpage"
-        )
+        return ""
 
     def _render_front_matter(self, block: Dict[str, Any], ctx: Dict[str, Any]) -> str:
         """Front-matter heading + (optional) body. Subtype steers the
@@ -587,13 +556,17 @@ class BlocksToLatexConverter:
 # Doc 23 R-2.4 / R-2.6 — dedication, foreword, preface, prologue,
 # generic front matter all carry role == "front_matter" with a
 # subtype.
-#
-# title_page is intentionally NOT in this set for B.1: title pages
-# remain tightly coupled with the SYSTEM_TITLE_PAGE / H-001 placeholder
-# in the existing template wiring. Subsequent Bucket B commits
-# (R-2.1 half-title, R-2.2 title-page fallback) redesign that path
-# and may move title_page into the front-matter partition.
 _FRONT_MATTER_ROLES = frozenset({"front_matter"})
+
+# Roles that are CONSUMED upstream of rendering — they don't emit
+# LaTeX in either the \frontmatter or \mainmatter region.
+# Doc 23 R-2.2 — title_page blocks: C-003 already extracted their
+# text into artifact.manuscript_meta during W1's classify phase. The
+# template-fill layer reads from manuscript_meta to build the system
+# title page. Re-rendering the raw blocks here would double the title
+# page (one from the system generator + one from the converter). So
+# title_page blocks are silently dropped from rendering.
+_CONSUMED_ROLES = frozenset({"title_page"})
 
 
 def _partition_front_matter(
@@ -602,12 +575,17 @@ def _partition_front_matter(
     """Split blocks into (front_matter, body) by role.
 
     Preserves document order within each partition. Pure function;
-    does not mutate input.
+    does not mutate input. Roles in `_CONSUMED_ROLES` (currently only
+    title_page) are dropped — they're handled by the template-fill
+    layer reading artifact.manuscript_meta directly.
     """
     front: List[Dict[str, Any]] = []
     body: List[Dict[str, Any]] = []
     for block in blocks:
-        if block.get("role") in _FRONT_MATTER_ROLES:
+        role = block.get("role")
+        if role in _CONSUMED_ROLES:
+            continue
+        if role in _FRONT_MATTER_ROLES:
             front.append(block)
         else:
             body.append(block)

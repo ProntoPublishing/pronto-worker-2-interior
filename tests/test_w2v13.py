@@ -722,36 +722,13 @@ class Test_TemplateSystemTitlePagePlaceholder(unittest.TestCase):
             )
 
 
-class Test_SystemTitlePageHelper(unittest.TestCase):
-    """The helper reads applied_rules[] for an H-001 entry and chooses
-    suppression vs the standard system title page block.
-    """
-
-    def test_h001_present_suppresses_system_block(self):
-        from pronto_worker_2 import _system_title_page_latex
-        artifact = {
-            "applied_rules": [
-                {"rule": "H-001", "version": "v1",
-                 "decision": "used author title page; suppressed system-generated"}
-            ]
-        }
-        out = _system_title_page_latex(artifact)
-        self.assertIn("suppressed by H-001", out)
-        self.assertNotIn("\\begin{titlepage}", out)
-
-    def test_h001_absent_emits_standard_block(self):
-        from pronto_worker_2 import _system_title_page_latex
-        artifact = {"applied_rules": []}
-        out = _system_title_page_latex(artifact)
-        self.assertIn("\\begin{titlepage}", out)
-        self.assertIn("{{BOOK_TITLE}}", out)
-        self.assertIn("{{AUTHOR_NAME}}", out)
-
-    def test_no_applied_rules_field_emits_standard_block(self):
-        from pronto_worker_2 import _system_title_page_latex
-        artifact = {}
-        out = _system_title_page_latex(artifact)
-        self.assertIn("\\begin{titlepage}", out)
+# Test_SystemTitlePageHelper removed in Bucket B.2.
+# _system_title_page_latex() was the H-001-conditional title-page
+# helper; it's replaced by lib.title_page.{resolve_title_fields,
+# render_title_page_latex, render_half_title_page_latex}. The new
+# behavior is tested in tests/test_doc23_v1.py:
+#   Test_R2_1_HalfTitlePage
+#   Test_R2_2_TitlePageFallbackChain
 
 
 class Test_V1ReaderH001Synthesis(unittest.TestCase):
@@ -803,9 +780,19 @@ class Test_V1ReaderH001Synthesis(unittest.TestCase):
         self.assertEqual(len(h001), 1)
 
 
-class Test_TitlePageHandlerRenders(unittest.TestCase):
+class Test_TitlePageBlocksConsumedNotRendered(unittest.TestCase):
+    """Bucket B.2 — title_page-role blocks are consumed upstream of
+    rendering. C-003 already extracted their text into
+    artifact.manuscript_meta during W1's classify phase. The converter's
+    title_page handler is retained for HANDLER_MAP coverage but is
+    unreachable: _partition_front_matter drops these blocks before
+    convert_split iterates.
 
-    def test_title_block_renders_centered_huge_bold(self):
+    The new title-page rendering is tested in tests/test_doc23_v1.py
+    (Test_R2_1_HalfTitlePage, Test_R2_2_TitlePageFallbackChain).
+    """
+
+    def test_title_page_block_does_not_render_via_convert(self):
         c = BlocksToLatexConverter()
         block = {
             "id": "b_000001", "type": "paragraph", "role": "title_page",
@@ -813,45 +800,33 @@ class Test_TitlePageHandlerRenders(unittest.TestCase):
             "classification_notes": ["title_page positional role: title"],
         }
         out = c.convert([block], params={})
-        self.assertIn("\\begin{center}", out)
-        self.assertIn("\\Huge", out)
-        self.assertIn("\\textbf{The Long Quiet}", out)
+        self.assertEqual(
+            out.strip(), "",
+            "title_page blocks must not emit any LaTeX — they're consumed "
+            "by the metadata extraction path.",
+        )
 
-    def test_subtitle_block_renders_large(self):
-        c = BlocksToLatexConverter()
-        block = {
-            "id": "b_000002", "type": "paragraph", "role": "title_page",
-            "spans": [{"text": "A Gentle Guide", "marks": []}],
-            "classification_notes": ["title_page positional role: subtitle"],
-        }
-        out = c.convert([block], params={})
-        self.assertIn("\\Large", out)
-        self.assertIn("A Gentle Guide", out)
-
-    def test_byline_block_renders_with_clearpage(self):
-        c = BlocksToLatexConverter()
-        block = {
-            "id": "b_000003", "type": "paragraph", "role": "title_page",
-            "spans": [{"text": "Test Author", "marks": []}],
-            "classification_notes": ["title_page positional role: author_or_byline"],
-        }
-        out = c.convert([block], params={})
-        self.assertIn("Test Author", out)
-        self.assertIn("\\clearpage", out)
-
-    def test_v1_title_block_without_positional_tag_renders_as_title(self):
-        """v1 reader synthesizes title_page role on front_matter_title
-        without populating classification_notes positional tags. The
-        handler defaults to title-rendering in that case.
-        """
-        c = BlocksToLatexConverter()
+    def test_title_page_block_dropped_from_both_partitions(self):
+        from lib.blocks_to_latex import _partition_front_matter
         block = {
             "id": "b_000001", "type": "paragraph", "role": "title_page",
-            "spans": [{"text": "Some Book", "marks": []}],
+            "spans": [{"text": "X", "marks": []}],
         }
-        out = c.convert([block], params={})
-        self.assertIn("\\Huge", out)
-        self.assertIn("Some Book", out)
+        front, body = _partition_front_matter([block])
+        self.assertEqual(front, [])
+        self.assertEqual(body, [])
+
+    def test_title_page_handler_kept_for_handler_map_coverage(self):
+        """The handler must remain registered (for the __init__
+        deployment guard) even though it's unreachable in practice."""
+        c = BlocksToLatexConverter()
+        self.assertIn("title_page", c.HANDLER_MAP)
+        # Calling it directly returns "" (the no-op behavior).
+        result = c._render_title_page(
+            {"id": "x", "spans": [{"text": "y", "marks": []}]},
+            ctx={},
+        )
+        self.assertEqual(result, "")
 
 
 # ---------------------------------------------------------------------------
@@ -919,17 +894,35 @@ def _render_through_pipeline(artifact: dict) -> tuple[dict, str]:
     return norm, body
 
 
-def _full_filled_template(template_name: str, norm: dict, latex_body: str) -> str:
+def _full_filled_template(template_name: str, norm: dict, latex_body: str,
+                          latex_front: str = "") -> str:
     """Mirror pronto_worker_2.py's template-fill substitution to produce
     the final .tex source. Useful for asserting against the whole
-    document, including the system-title-page conditional.
+    document, including the half-title and system title page.
+
+    Bucket B.2: title-page substitution is now generated by
+    lib.title_page from the manuscript_meta → params fallback chain.
+    Tests pass synthetic params (book_title, author_name) so the
+    chain resolves cleanly even on artifacts whose manuscript_meta
+    is sparse.
     """
-    from pronto_worker_2 import _system_title_page_latex
+    from lib.title_page import (
+        render_half_title_page_latex,
+        render_title_page_latex,
+        resolve_title_fields,
+    )
     template = (REPO_ROOT / template_name).read_text(encoding="utf-8")
-    system_title = _system_title_page_latex(norm)
+    fields = resolve_title_fields(
+        norm,
+        {"book_title": "The Long Quiet", "author_name": "Test Author"},
+    )
+    half_title = render_half_title_page_latex(fields)
+    system_title = render_title_page_latex(fields)
     return (
         template
         .replace("{{CONTENT}}", latex_body, 1)
+        .replace("{{FRONT_MATTER_CONTENT}}", latex_front, 1)
+        .replace("{{HALF_TITLE_PAGE}}", half_title, 1)
         .replace("{{SYSTEM_TITLE_PAGE}}", system_title, 1)
         .replace("{{BOOK_TITLE}}", "The Long Quiet")
         .replace("{{AUTHOR_NAME}}", "Test Author")
@@ -1006,13 +999,19 @@ class Test_LongQuiet_V1Path(unittest.TestCase):
     # Bug 4: triple/doubled title page.
     def test_v1_path_system_title_page_emitted(self):
         """The Long Quiet v1 producer didn't emit a front_matter_title
-        block, so H-001 does NOT fire on this artifact. The system
-        title page renders. Documenting expected behavior — this is
-        the v1-path limitation that v2 path is supposed to fix.
+        block. Per Bucket B.2 (R-2.2), W2 always renders a system
+        title page from the manuscript_meta → params fallback chain;
+        the H-001 conditional is gone. We assert the new title-page
+        markup is present.
         """
-        self.assertIn(r"\begin{titlepage}", self.tex,
-                      "Without H-001 evidence, system title page should render")
-        # No H-001 entry in applied_rules confirms v1 path didn't see one.
+        # New R-2.2 system title page uses `\Huge\textbf{...}` inside
+        # \begin{center}, NOT \begin{titlepage}.
+        self.assertIn(r"\Huge\textbf{The Long Quiet}", self.tex,
+                      "System title page (R-2.2) missing the title")
+        self.assertIn(r"\large Test Author", self.tex,
+                      "System title page (R-2.2) missing the author byline")
+        # H-001 may or may not be in applied_rules; v1 path here didn't
+        # see one (no front_matter_title block).
         h001 = [r for r in self.norm["applied_rules"] if r.get("rule") == "H-001"]
         self.assertEqual(h001, [],
                          "v1 reader synthesized H-001 unexpectedly on Long Quiet")
@@ -1075,14 +1074,27 @@ class Test_LongQuiet_V2Path(unittest.TestCase):
     # Bug 4.
     def test_v2_path_h001_suppresses_system_title(self):
         """W1 v2 fired H-001 (intake metadata + author title page).
-        The system title page should be suppressed in the .tex.
+        Per Bucket B.2 (R-2.2), the system title page now ALWAYS
+        renders from the manuscript_meta → params fallback chain —
+        the H-001-conditional suppression is gone, and title_page-role
+        blocks are consumed upstream rather than re-rendered. So the
+        old "title page appears twice" bug is now structurally
+        impossible: title_page blocks don't render at all (consumed
+        by C-003 → manuscript_meta), and the system title page
+        renders exactly once.
         """
         h001 = [r for r in self.norm["applied_rules"] if r.get("rule") == "H-001"]
         self.assertEqual(len(h001), 1, "H-001 missing from v2 applied_rules")
-        self.assertNotIn(
-            r"\begin{titlepage}", self.tex,
-            "Bug 4 (system title page) recreated in W2 v2 path — H-001 "
-            "fired but the suppression substitution didn't take effect."
+        # Old-style \begin{titlepage} is gone; new R-2.2 markup is
+        # \Huge\textbf{...}. Verify the title appears exactly once
+        # (defends against the doubled-title-page bug).
+        title_huge_count = self.tex.count(r"\Huge\textbf{")
+        # 2 occurrences: 1 for half-title (R-2.1), 1 for system title
+        # page (R-2.2). NOT 3 (the doubled-title-page regression).
+        self.assertEqual(
+            title_huge_count, 2,
+            f"Expected 2 \\Huge\\textbf occurrences (half-title + system title); "
+            f"got {title_huge_count}. >2 = doubled-title-page regression."
         )
         # And the author cluster renders via title_page handler.
         title_page_blocks = [

@@ -120,6 +120,7 @@ class Test_TemplateFillSurface(unittest.TestCase):
         for k, v in (
             ("{{CONTENT}}", ""),
             ("{{FRONT_MATTER_CONTENT}}", ""),
+            ("{{HALF_TITLE_PAGE}}", ""),
             ("{{SYSTEM_TITLE_PAGE}}", ""),
             ("{{BOOK_TITLE}}", "Stub"),
             ("{{AUTHOR_NAME}}", "Stub"),
@@ -605,18 +606,23 @@ class Test_FrontMatterPartition(unittest.TestCase):
         self.assertEqual(front, [])
         self.assertEqual(rest, [])
 
-    def test_partition_keeps_title_page_in_body_for_now(self) -> None:
-        """B.1 explicitly does NOT route title_page blocks to front
-        matter — they're tightly coupled with the SYSTEM_TITLE_PAGE
-        placeholder. R-2.2 (next commit) redesigns this path."""
+    def test_partition_drops_title_page_blocks_from_both_partitions(
+        self,
+    ) -> None:
+        """R-2.2 — title_page blocks are CONSUMED upstream of rendering.
+        C-003 already extracted their text into manuscript_meta during
+        W1's classify phase; the template-fill layer reads from there
+        to build the system title page. Re-rendering the raw blocks
+        would double the title page."""
         tp = {
             "id": "b1", "type": "paragraph", "role": "title_page",
             "spans": [{"text": "The Title", "marks": []}],
         }
         body = _make_body("b2", "Body.")
         front, rest = _partition_front_matter([tp, body])
-        self.assertEqual(front, [])
-        self.assertEqual([b["id"] for b in rest], ["b1", "b2"])
+        self.assertEqual(front, [], "title_page must not route to front")
+        self.assertEqual([b["id"] for b in rest], ["b2"],
+                         "title_page must not route to body either — it's consumed")
 
     # -- convert_split() public API ------------------------------------
     def test_convert_split_returns_tuple_of_strings(self) -> None:
@@ -726,6 +732,209 @@ class Test_FrontMatterTemplatePlumbing(unittest.TestCase):
         main_idx = self.nonfiction.find(r"\mainmatter")
         self.assertGreater(ph_idx, front_idx)
         self.assertLess(ph_idx, main_idx)
+
+
+class Test_R2_1_HalfTitlePage(unittest.TestCase):
+    """R-2.1 — recto page, book title only, vertically centered.
+    Renders via lib.title_page.render_half_title_page_latex."""
+
+    def setUp(self) -> None:
+        from lib.title_page import (
+            render_half_title_page_latex,
+            ResolvedTitleFields,
+        )
+        self.render = render_half_title_page_latex
+        self.fields = ResolvedTitleFields(
+            title="Pride and Prejudice",
+            subtitle=None,
+            author="Jane Austen",
+            title_source="manuscript_meta",
+        )
+
+    def test_R0201_emits_huge_bold_title(self) -> None:
+        out = self.render(self.fields)
+        self.assertIn(r"\Huge\textbf{Pride and Prejudice}", out)
+
+    def test_R0201_does_not_emit_author_or_subtitle(self) -> None:
+        out = self.render(self.fields)
+        self.assertNotIn("Jane Austen", out)
+        # Verify even when subtitle is set, half-title still doesn't show it.
+        from lib.title_page import ResolvedTitleFields
+        with_sub = ResolvedTitleFields(
+            title="X", subtitle="A subtitle", author="Y",
+            title_source="manuscript_meta",
+        )
+        out2 = self.render(with_sub)
+        self.assertNotIn("subtitle", out2.lower())
+        self.assertNotIn("Y", out2)
+
+    def test_R0201_lands_on_recto_via_cleardoublepage(self) -> None:
+        """The half-title is wrapped with \\cleardoublepage on both
+        sides: leading to land it on a recto, trailing so the title
+        page also lands on a recto."""
+        out = self.render(self.fields)
+        self.assertEqual(out.count(r"\cleardoublepage"), 2)
+        self.assertTrue(out.startswith(r"\cleardoublepage"),
+                        "half-title must START with \\cleardoublepage")
+        self.assertTrue(out.rstrip().endswith(r"\cleardoublepage"),
+                        "half-title must END with \\cleardoublepage")
+
+    def test_R0201_thispagestyle_empty(self) -> None:
+        """Half-title page number is suppressed (R-6.2)."""
+        out = self.render(self.fields)
+        self.assertIn(r"\thispagestyle{empty}", out)
+
+
+class Test_R2_2_TitlePageFallbackChain(unittest.TestCase):
+    """R-2.2 — title from manuscript_meta → params → fail Service.
+    Subtitle and author are optional; absent is fine."""
+
+    def setUp(self) -> None:
+        from lib.title_page import (
+            TitlePageMissingError,
+            render_title_page_latex,
+            resolve_title_fields,
+        )
+        self.MissingError = TitlePageMissingError
+        self.render = render_title_page_latex
+        self.resolve = resolve_title_fields
+
+    # -- Fallback chain ------------------------------------------------
+    def test_R0202_artifact_meta_wins_when_present(self) -> None:
+        artifact = {"manuscript_meta": {
+            "title": "Real Title",
+            "author": "Real Author",
+        }}
+        params = {"book_title": "Fallback Title", "author_name": "Fallback Author"}
+        fields = self.resolve(artifact, params)
+        self.assertEqual(fields.title, "Real Title")
+        self.assertEqual(fields.title_source, "manuscript_meta")
+
+    def test_R0202_falls_back_to_params_when_meta_empty(self) -> None:
+        artifact = {"manuscript_meta": {"title": "", "author": ""}}
+        params = {"book_title": "Fallback Title", "author_name": "Fallback Author"}
+        fields = self.resolve(artifact, params)
+        self.assertEqual(fields.title, "Fallback Title")
+        self.assertEqual(fields.title_source, "params")
+        self.assertEqual(fields.author, "Fallback Author")
+
+    def test_R0202_falls_back_when_no_manuscript_meta_at_all(self) -> None:
+        artifact = {}  # No manuscript_meta key
+        params = {"book_title": "Just Params", "author_name": "Author"}
+        fields = self.resolve(artifact, params)
+        self.assertEqual(fields.title, "Just Params")
+        self.assertEqual(fields.title_source, "params")
+
+    def test_R0202_fails_when_both_missing(self) -> None:
+        artifact = {"manuscript_meta": {"title": "", "author": ""}}
+        params = {"book_title": "", "author_name": ""}
+        with self.assertRaises(self.MissingError) as ctx:
+            self.resolve(artifact, params)
+        self.assertEqual(ctx.exception.field, "title")
+
+    def test_R0202_fails_when_no_artifact_meta_and_empty_params(self) -> None:
+        with self.assertRaises(self.MissingError):
+            self.resolve({}, {})
+
+    def test_R0202_subtitle_is_optional(self) -> None:
+        """A title with no subtitle resolves cleanly; subtitle is None."""
+        artifact = {"manuscript_meta": {"title": "T", "author": "A"}}
+        fields = self.resolve(artifact, {})
+        self.assertIsNone(fields.subtitle)
+
+    def test_R0202_author_is_optional(self) -> None:
+        artifact = {"manuscript_meta": {"title": "T"}}
+        fields = self.resolve(artifact, {})
+        self.assertIsNone(fields.author)
+
+    def test_R0202_handles_render_params_dataclass_too(self) -> None:
+        """The fallback path supports both legacy dict params and
+        RenderParams instances."""
+        from lib.render_params import RenderParams
+        rp = RenderParams(book_title="From RP", author_name="A")
+        artifact = {}
+        fields = self.resolve(artifact, rp)
+        self.assertEqual(fields.title, "From RP")
+
+    def test_R0202_whitespace_only_title_treated_as_missing(self) -> None:
+        """A whitespace-only manuscript_meta.title doesn't satisfy the
+        chain; fall back to params or fail."""
+        artifact = {"manuscript_meta": {"title": "   "}}
+        params = {"book_title": "Real"}
+        fields = self.resolve(artifact, params)
+        self.assertEqual(fields.title, "Real")
+
+    # -- Rendering -----------------------------------------------------
+    def test_R0202_render_emits_huge_bold_title(self) -> None:
+        from lib.title_page import ResolvedTitleFields
+        fields = ResolvedTitleFields(
+            title="The Book", subtitle=None, author=None,
+            title_source="params",
+        )
+        out = self.render(fields)
+        self.assertIn(r"\Huge\textbf{The Book}", out)
+
+    def test_R0202_render_omits_subtitle_when_absent(self) -> None:
+        from lib.title_page import ResolvedTitleFields
+        fields = ResolvedTitleFields(
+            title="Title", subtitle=None, author="Author",
+            title_source="params",
+        )
+        out = self.render(fields)
+        self.assertNotIn(r"\textit", out)
+
+    def test_R0202_render_emits_subtitle_when_present(self) -> None:
+        from lib.title_page import ResolvedTitleFields
+        fields = ResolvedTitleFields(
+            title="Title", subtitle="A Witty Subtitle", author=None,
+            title_source="manuscript_meta",
+        )
+        out = self.render(fields)
+        self.assertIn(r"\Large\textit{A Witty Subtitle}", out)
+
+    def test_R0202_render_omits_author_when_absent(self) -> None:
+        from lib.title_page import ResolvedTitleFields
+        fields = ResolvedTitleFields(
+            title="Title", subtitle=None, author=None,
+            title_source="params",
+        )
+        out = self.render(fields)
+        # No \large author byline if author is None.
+        self.assertNotIn(r"\large", out)
+
+    def test_R0202_render_emits_author_when_present(self) -> None:
+        from lib.title_page import ResolvedTitleFields
+        fields = ResolvedTitleFields(
+            title="Title", subtitle=None, author="Jane",
+            title_source="manuscript_meta",
+        )
+        out = self.render(fields)
+        self.assertIn(r"\large Jane", out)
+
+    def test_R0202_render_escapes_latex_specials_in_title(self) -> None:
+        from lib.title_page import ResolvedTitleFields
+        fields = ResolvedTitleFields(
+            title="Title with $ and #", subtitle=None, author=None,
+            title_source="params",
+        )
+        out = self.render(fields)
+        # No raw `$` survives; LaTeX-escaped form should appear.
+        self.assertNotIn("$", out.replace(r"\$", ""))
+        self.assertIn(r"\$", out)
+        self.assertIn(r"\#", out)
+
+    def test_R0202_render_ends_with_clearpage_for_copyright_verso(self) -> None:
+        """The trailing \\clearpage (NOT \\cleardoublepage) ensures the
+        copyright lands on the verso of the title page per R-2.3."""
+        from lib.title_page import ResolvedTitleFields
+        fields = ResolvedTitleFields(
+            title="X", subtitle=None, author=None,
+            title_source="params",
+        )
+        out = self.render(fields)
+        self.assertTrue(out.rstrip().endswith(r"\clearpage"))
+        # Make sure it's NOT \cleardoublepage at the end.
+        self.assertFalse(out.rstrip().endswith(r"\cleardoublepage"))
 
 
 if __name__ == "__main__":

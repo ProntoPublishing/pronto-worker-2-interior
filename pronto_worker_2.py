@@ -49,6 +49,12 @@ from lib.blocks_to_latex import BlocksToLatexConverter
 from lib.pdf_generator import PDFGenerator
 from lib.pdf_validator import PDFValidator
 from lib.airtable_client import AirtableClient
+from lib.title_page import (
+    TitlePageMissingError,
+    render_half_title_page_latex,
+    render_title_page_latex,
+    resolve_title_fields,
+)
 
 # Configure logging
 logging.basicConfig(
@@ -58,35 +64,12 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def _system_title_page_latex(artifact: Dict[str, Any]) -> str:
-    """Build the {{SYSTEM_TITLE_PAGE}} substitution.
-
-    When the artifact's applied_rules[] carries an H-001 entry, the
-    system-generated title page is suppressed (the author supplied
-    one, and the converter's title_page handler renders it). Otherwise
-    the standard system title page block is emitted, with
-    {{BOOK_TITLE}} / {{AUTHOR_NAME}} substituted by the next
-    template-fill step.
-    """
-    h001_fired = any(
-        r.get("rule") == "H-001"
-        for r in (artifact.get("applied_rules") or [])
-    )
-    if h001_fired:
-        return (
-            "% System title page suppressed by H-001\n"
-            "% (author supplied a title page; converter renders it from\n"
-            "% title_page-role blocks)."
-        )
-    return (
-        "\\begin{titlepage}\n"
-        "    \\centering\n"
-        "    \\vspace*{2in}\n"
-        "    {\\Huge\\textbf{{{BOOK_TITLE}}}}\\\\[1em]\n"
-        "    {\\Large {{AUTHOR_NAME}}}\n"
-        "    \\vfill\n"
-        "\\end{titlepage}"
-    )
+# Doc 23 R-2.1 / R-2.2 title-page rendering moved to lib.title_page in
+# Bucket B.2. The H-001 conditional path here is superseded: the
+# system always generates a title page using the manuscript_meta →
+# params fallback chain (see resolve_title_fields). title_page-role
+# blocks no longer render directly — they're consumed by C-003 into
+# manuscript_meta upstream.
 
 
 class InteriorProcessor:
@@ -230,13 +213,20 @@ class InteriorProcessor:
             requested_font = params.get("font", "Garamond")
             actual_font = font_map.get(requested_font, "EB Garamond")
             
-            # H-001 conditional: if the artifact's applied_rules[] carries
-            # an H-001 entry (Layer 5 author-supplied-title-page decision),
-            # the system-generated title page is suppressed and the
-            # author's title_page-role blocks render in its place via
-            # the converter. Otherwise the standard system title page
-            # block is substituted.
-            system_title_page = _system_title_page_latex(artifact)
+            # Doc 23 R-2.1 + R-2.2 — half-title + title page from the
+            # manuscript_meta → params fallback chain. If both sources
+            # are empty, resolve_title_fields raises
+            # TitlePageMissingError; the surrounding try/except in
+            # process_service catches it and fails the Service with a
+            # clear error log per R-2.2's "fail the Service" mandate.
+            title_fields = resolve_title_fields(artifact, params)
+            half_title_page = render_half_title_page_latex(title_fields)
+            system_title_page = render_title_page_latex(title_fields)
+            logger.info(
+                f"[{run_id}] title-page resolved from "
+                f"{title_fields.title_source}: title={title_fields.title!r} "
+                f"subtitle={title_fields.subtitle!r} author={title_fields.author!r}"
+            )
 
             # Replace the body placeholder with count=1 explicitly. latex_body
             # is a multi-line string containing the entire book; any second
@@ -251,6 +241,7 @@ class InteriorProcessor:
                 template
                 .replace("{{CONTENT}}", latex_body, 1)
                 .replace("{{FRONT_MATTER_CONTENT}}", latex_front, 1)
+                .replace("{{HALF_TITLE_PAGE}}", half_title_page, 1)
                 .replace("{{SYSTEM_TITLE_PAGE}}", system_title_page, 1)
                 .replace("{{BOOK_TITLE}}", params.get("book_title", ""))
                 .replace("{{AUTHOR_NAME}}", params.get("author_name", ""))

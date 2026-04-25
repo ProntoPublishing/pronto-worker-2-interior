@@ -48,38 +48,14 @@ from typing import Any, Dict, Optional, Tuple
 
 from .blocks_to_latex import BlocksToLatexConverter
 from .render_params import RenderParams
+from .title_page import (
+    TitlePageMissingError,
+    render_half_title_page_latex,
+    render_title_page_latex,
+    resolve_title_fields,
+)
 
 logger = logging.getLogger(__name__)
-
-
-# ---------------------------------------------------------------------------
-# System title page builder — duplicated from pronto_worker_2 so the
-# local runner doesn't pull in the Airtable / R2 stack that module
-# imports at top level. The two MUST stay in sync; tracked on the
-# punchlist for a follow-on dedupe (the natural home is render_params,
-# but it depends on artifact.applied_rules so it's not strictly a
-# "params" thing).
-# ---------------------------------------------------------------------------
-def _system_title_page_latex(artifact: Dict[str, Any]) -> str:
-    h001_fired = any(
-        r.get("rule") == "H-001"
-        for r in (artifact.get("applied_rules") or [])
-    )
-    if h001_fired:
-        return (
-            "% System title page suppressed by H-001\n"
-            "% (author supplied a title page; converter renders it from\n"
-            "% title_page-role blocks)."
-        )
-    return (
-        "\\begin{titlepage}\n"
-        "    \\centering\n"
-        "    \\vspace*{2in}\n"
-        "    {\\Huge\\textbf{{{BOOK_TITLE}}}}\\\\[1em]\n"
-        "    {\\Large {{AUTHOR_NAME}}}\n"
-        "    \\vfill\n"
-        "\\end{titlepage}"
-    )
 
 
 class LocalRenderResult:
@@ -186,7 +162,18 @@ def render_local(
     }
     actual_font = font_map.get(params.body_font_family, "EB Garamond")
 
-    system_title_page = _system_title_page_latex(artifact)
+    # Doc 23 R-2.1 + R-2.2 — half-title + title page from the
+    # manuscript_meta → params fallback chain. Failure (neither source
+    # supplied a title) propagates as TitlePageMissingError; the CLI
+    # caller surfaces it as a structured error, not a raw stack trace.
+    title_fields = resolve_title_fields(artifact, params)
+    half_title_page = render_half_title_page_latex(title_fields)
+    system_title_page = render_title_page_latex(title_fields)
+    logger.info(
+        "title-page resolved from %s: title=%r subtitle=%r author=%r",
+        title_fields.title_source,
+        title_fields.title, title_fields.subtitle, title_fields.author,
+    )
 
     # Apply book-specific placeholders first, then RenderParams typography
     # placeholders. Both halves use count=1 to defend against any
@@ -196,6 +183,7 @@ def render_local(
         template
         .replace("{{CONTENT}}", latex_body, 1)
         .replace("{{FRONT_MATTER_CONTENT}}", latex_front, 1)
+        .replace("{{HALF_TITLE_PAGE}}", half_title_page, 1)
         .replace("{{SYSTEM_TITLE_PAGE}}", system_title_page, 1)
         .replace("{{BOOK_TITLE}}", params.book_title)
         .replace("{{AUTHOR_NAME}}", params.author_name)
