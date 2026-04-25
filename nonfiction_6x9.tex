@@ -190,6 +190,10 @@ ISBN: {{ISBN}}
 
 \backmatter
 
-% About the Author, Index, etc. are included in {{CONTENT}}
+% Back-matter blocks (About the Author, Index, etc.) are produced by
+% Worker 1 and emitted as part of the body content above. Do not
+% reference the template content placeholder literally in comments: a
+% stray literal here would be substituted with the full body during
+% template fill, rendering the book twice.
 
 \end{document}

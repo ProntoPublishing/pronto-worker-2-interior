@@ -190,9 +190,18 @@ class InteriorProcessor:
             requested_font = params.get("font", "Garamond")
             actual_font = font_map.get(requested_font, "EB Garamond")
             
+            # Replace the body placeholder with count=1 explicitly. latex_body
+            # is a multi-line string containing the entire book; any second
+            # occurrence of the {{CONTENT}} marker in the template — including
+            # one inside a LaTeX comment — would cause Python's str.replace()
+            # to substitute the body there as well, and the multi-line content
+            # would break out of the '%' comment at its first newline and
+            # render as a duplicate copy of the book. Templates should never
+            # carry a second {{CONTENT}} literal; this count=1 is defense in
+            # depth.
             latex_content = (
                 template
-                .replace("{{CONTENT}}", latex_body)
+                .replace("{{CONTENT}}", latex_body, 1)
                 .replace("{{BOOK_TITLE}}", params.get("book_title", ""))
                 .replace("{{AUTHOR_NAME}}", params.get("author_name", ""))
                 .replace("{{FONT_NAME}}", actual_font)
