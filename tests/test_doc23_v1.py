@@ -445,5 +445,111 @@ class Test_R4_2_StripUnderlineStrikethrough(unittest.TestCase):
         self.assertIn(r"\texttt{verb}", code_out)
 
 
+class Test_R7_1_UnrecognizedRoleFallback(unittest.TestCase):
+    """R-7.1 — a block carrying a role NOT in W2's canonical ROLES set
+    renders as body_paragraph + emits a warning. The Service does NOT
+    fail. This is the schema-drift-forward path: Doc 22 may grow new
+    roles before W2 catches up.
+    """
+
+    def setUp(self) -> None:
+        self.converter = BlocksToLatexConverter()
+
+    def test_R0701_unknown_role_does_not_raise(self) -> None:
+        block = {
+            "id": "b1", "type": "paragraph", "role": "future_role_v3",
+            "spans": [{"text": "Mystery content.", "marks": []}],
+        }
+        # Suppress the warning during this test — the next test asserts
+        # it fires; this one is about not crashing.
+        import logging
+        logging.disable(logging.WARNING)
+        try:
+            out = self.converter.convert(
+                [block], params={}, degraded_mode=False,
+            )
+        finally:
+            logging.disable(logging.NOTSET)
+        self.assertIn("Mystery content.", out)
+
+    def test_R0701_unknown_role_renders_as_body_paragraph(self) -> None:
+        """The fallback uses the body_paragraph handler, which honors
+        spans + marks + escaping. A span with italic mark on an
+        unknown-role block must still render with \\textit."""
+        block = {
+            "id": "b1", "type": "paragraph", "role": "future_role_v3",
+            "spans": [
+                {"text": "plain ", "marks": []},
+                {"text": "emphatic", "marks": ["italic"]},
+                {"text": ".", "marks": []},
+            ],
+        }
+        with self.assertLogs("lib.blocks_to_latex", level="WARNING"):
+            out = self.converter.convert(
+                [block], params={}, degraded_mode=False,
+            )
+        # Body paragraph rendering: spans concatenate, italic wraps.
+        self.assertIn(r"plain \textit{emphatic}.", out)
+
+    def test_R0701_unknown_role_emits_warning(self) -> None:
+        block = {
+            "id": "b_xyz", "type": "paragraph", "role": "epigraph_v2",
+            "spans": [{"text": "x", "marks": []}],
+        }
+        with self.assertLogs("lib.blocks_to_latex", level="WARNING") as caught:
+            self.converter.convert([block], params={}, degraded_mode=False)
+        self.assertTrue(
+            any("R-7.1" in r and "epigraph_v2" in r and "b_xyz" in r
+                for r in caught.output),
+            f"expected R-7.1 warning naming the role + block id; "
+            f"got {caught.output!r}",
+        )
+
+    def test_R0701_unknown_role_does_not_fail_the_service(self) -> None:
+        """Mixed-roles run: a known role + an unknown role + another
+        known role. All three should render; the convert() call must
+        not raise."""
+        known1 = _make_body("b1", "Before unknown.")
+        unknown = {
+            "id": "b2", "type": "paragraph", "role": "future_marker",
+            "spans": [{"text": "Unknown content.", "marks": []}],
+        }
+        known2 = _make_body("b3", "After unknown.")
+        with self.assertLogs("lib.blocks_to_latex", level="WARNING"):
+            out = self.converter.convert(
+                [known1, unknown, known2], params={}, degraded_mode=False,
+            )
+        self.assertIn("Before unknown.", out)
+        self.assertIn("Unknown content.", out)
+        self.assertIn("After unknown.", out)
+
+    def test_R0701_known_roles_still_dispatch_to_proper_handlers(
+        self,
+    ) -> None:
+        """Regression check: the fallback path must NOT be hit for
+        canonical roles. A chapter_heading still produces \\chapter."""
+        ch = _make_chapter("b1", 1, "Beginning")
+        out = self.converter.convert([ch], params={}, degraded_mode=False)
+        self.assertIn(r"\chapter{Beginning}", out)
+
+    def test_R0701_init_still_fails_on_handler_map_coding_error(
+        self,
+    ) -> None:
+        """The __init__ deployment guard for missing canonical-role
+        handlers must remain intact. R-7.1 is the *runtime* fallback
+        for schema-drift-forward; it does NOT relax the coding check
+        that catches a HANDLER_MAP that's lost a canonical role."""
+        from lib import blocks_to_latex as mod
+
+        class BrokenConverter(mod.BlocksToLatexConverter):
+            HANDLER_MAP = {  # missing chapter_heading and others
+                "body_paragraph": "_render_body_paragraph",
+            }
+
+        with self.assertRaises(RuntimeError) as ctx:
+            BrokenConverter()
+        self.assertIn("missing handlers for roles", str(ctx.exception))
+
+
 if __name__ == "__main__":
     unittest.main()

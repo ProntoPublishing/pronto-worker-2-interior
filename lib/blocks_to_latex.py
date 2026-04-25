@@ -173,10 +173,23 @@ class BlocksToLatexConverter:
 
             handler_name = self.HANDLER_MAP.get(role)
             if handler_name is None:
-                # __init__ guarantees this can't happen, but defensive.
-                logger.error(f"No handler for role {role!r}")
-                out.append(f"% ERROR: no handler for role {role}")
-                continue
+                # Doc 23 R-7.1 — unrecognized role. Two cases:
+                #   1. Schema-drift-forward: a future Doc 22 version
+                #      added a role this W2 doesn't know yet. Render
+                #      as body_paragraph so the content survives;
+                #      don't fail the Service.
+                #   2. A typo / corruption / producer bug: same
+                #      remediation, but the warning makes it visible.
+                # __init__'s deployment guard catches the *coding*
+                # variant (HANDLER_MAP missing a known canonical role).
+                logger.warning(
+                    "R-7.1: unrecognized role %r on block %r — rendering "
+                    "as body_paragraph fallback. Either Doc 22 grew a "
+                    "new role since this W2 was deployed, or the "
+                    "producer drifted.",
+                    role, block.get("id"),
+                )
+                handler_name = "_render_body_paragraph"
             handler = getattr(self, handler_name)
             ctx = {"degraded": degraded_mode, "params": params}
             latex = handler(block, ctx)
