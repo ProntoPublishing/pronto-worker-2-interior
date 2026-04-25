@@ -522,10 +522,19 @@ class InteriorProcessor:
 
 def main():
     """CLI entry point."""
+    # --local mode bypasses Airtable / R2 / HTTP. Renders a fixture
+    # artifact JSON to interior.tex (+ interior.pdf when xelatex is
+    # available). See lib/local_runner.py.
+    if len(sys.argv) >= 2 and sys.argv[1] == "--local":
+        _run_local_mode(sys.argv[2:])
+        return
+
     if len(sys.argv) < 2:
-        print("Usage: python pronto_worker_2_v1.1.0_canonical.py <service_id>")
+        print("Usage:")
+        print("  python pronto_worker_2.py <service_id>")
+        print("  python pronto_worker_2.py --local --input <artifact.json> --output <dir> [--no-deterministic] [--no-pdf]")
         sys.exit(1)
-    
+
     service_id = sys.argv[1]
     
     # Validate environment
@@ -543,10 +552,59 @@ def main():
     
     processor = InteriorProcessor()
     result = processor.process_service(service_id)
-    
+
     print(json.dumps(result, indent=2))
-    
+
     sys.exit(0 if result['success'] else 1)
+
+
+def _run_local_mode(argv):
+    """Handler for `python pronto_worker_2.py --local …`.
+
+    Bypasses Airtable / R2 / HTTP. Renders a manuscript.v2 JSON
+    artifact (typically a W1 golden) to interior.tex, plus
+    interior.pdf + interior.txt when xelatex / pdftotext are available.
+    """
+    import argparse
+    parser = argparse.ArgumentParser(
+        prog="pronto_worker_2 --local",
+        description=(
+            "Render a W1 manuscript.v2 artifact to a local PDF. Bypasses "
+            "Airtable/R2/HTTP. Output is deterministic by default; .tex "
+            "is always written; .pdf and .txt are produced when xelatex "
+            "and pdftotext are on PATH."
+        ),
+    )
+    parser.add_argument("--input", required=True,
+                        help="Path to manuscript.v2 JSON artifact.")
+    parser.add_argument("--output", required=True,
+                        help="Output directory for interior.{tex,pdf,txt}.")
+    parser.add_argument("--no-deterministic", action="store_true",
+                        help="Use real timestamps (default: pinned).")
+    parser.add_argument("--no-pdf", action="store_true",
+                        help="Skip xelatex even if available (write only .tex).")
+    args = parser.parse_args(argv)
+
+    from lib.local_runner import render_local
+    result = render_local(
+        input_path=args.input,
+        output_dir=args.output,
+        deterministic=not args.no_deterministic,
+        skip_pdf=args.no_pdf,
+    )
+
+    print(json.dumps({
+        "success": True,
+        "output_dir": str(args.output),
+        "tex": str(result.tex_path) if result.tex_path else None,
+        "pdf": str(result.pdf_path) if result.pdf_path else None,
+        "txt": str(result.txt_path) if result.txt_path else None,
+        "pdf_skipped_reason": result.pdf_skipped_reason,
+        "txt_skipped_reason": result.txt_skipped_reason,
+        "blocks": result.blocks_count,
+        "warnings": result.warnings_count,
+    }, indent=2))
+    sys.exit(0)
 
 
 if __name__ == '__main__':

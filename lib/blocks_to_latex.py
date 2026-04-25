@@ -134,8 +134,24 @@ class BlocksToLatexConverter:
             f"(degraded={degraded_mode})"
         )
 
+        # Doc 23 R-3.4 — single-rendering invariant. Collapse adjacent
+        # duplicate chapter_heading blocks BEFORE iteration. Per W1
+        # contract I-4 this should never occur on a clean artifact;
+        # the collapse is a defensive measure against producer drift,
+        # and each collapse emits a warning so the operator can chase
+        # the upstream cause.
+        blocks = _collapse_adjacent_duplicate_chapter_headings(blocks)
+
         out: List[str] = []
         list_state = _ListState()
+
+        # Doc 23 R-3.5 + R-4.4 — first-paragraph-no-indent. The first
+        # body_paragraph after a chapter_heading or scene_break renders
+        # with `\noindent ` prefix. Any other intervening block clears
+        # the flag (R-3.5 / R-4.4 say "first paragraph immediately
+        # following"; a list_item or blockquote between consumes the
+        # adjacency). The flag clears after one body_paragraph.
+        next_paragraph_no_indent = False
 
         for block in blocks:
             role = block.get("role")
@@ -157,13 +173,43 @@ class BlocksToLatexConverter:
 
             handler_name = self.HANDLER_MAP.get(role)
             if handler_name is None:
-                # __init__ guarantees this can't happen, but defensive.
-                logger.error(f"No handler for role {role!r}")
-                out.append(f"% ERROR: no handler for role {role}")
-                continue
+                # Doc 23 R-7.1 — unrecognized role. Two cases:
+                #   1. Schema-drift-forward: a future Doc 22 version
+                #      added a role this W2 doesn't know yet. Render
+                #      as body_paragraph so the content survives;
+                #      don't fail the Service.
+                #   2. A typo / corruption / producer bug: same
+                #      remediation, but the warning makes it visible.
+                # __init__'s deployment guard catches the *coding*
+                # variant (HANDLER_MAP missing a known canonical role).
+                logger.warning(
+                    "R-7.1: unrecognized role %r on block %r — rendering "
+                    "as body_paragraph fallback. Either Doc 22 grew a "
+                    "new role since this W2 was deployed, or the "
+                    "producer drifted.",
+                    role, block.get("id"),
+                )
+                handler_name = "_render_body_paragraph"
             handler = getattr(self, handler_name)
             ctx = {"degraded": degraded_mode, "params": params}
             latex = handler(block, ctx)
+
+            # R-3.5 / R-4.4: prepend \noindent to the first body_paragraph
+            # after a chapter_heading or scene_break.
+            if (role == "body_paragraph"
+                    and next_paragraph_no_indent
+                    and latex):
+                latex = "\\noindent " + latex
+
+            # Update the no-indent flag for the NEXT iteration. Set on
+            # chapter_heading / scene_break; clear on every other role
+            # (the body_paragraph that consumed it, or any intervening
+            # structure that broke adjacency).
+            if role in ("chapter_heading", "scene_break"):
+                next_paragraph_no_indent = True
+            else:
+                next_paragraph_no_indent = False
+
             if latex:
                 out.append(latex)
                 out.append("")
@@ -200,6 +246,12 @@ class BlocksToLatexConverter:
         canonical vocabulary are dropped silently (the v1 reader already
         normalizes what it carries through; W1 v5.0 producer emits only
         canonical marks).
+
+        Doc 23 R-4.2 — `underline` and `strikethrough` marks are stripped
+        in v1 (the underlying span text is preserved, the mark is
+        not rendered). Underline in print fiction is dated; strikethrough
+        is rare and usually accidental from track-changes leakage. Both
+        are no-ops here.
         """
         if not marks:
             return escaped_text
@@ -214,9 +266,11 @@ class BlocksToLatexConverter:
             elif mark == "code":
                 wrapped = f"\\texttt{{{wrapped}}}"
             elif mark == "underline":
-                wrapped = f"\\underline{{{wrapped}}}"
+                # R-4.2: stripped in v1 — text passes through unmarked.
+                pass
             elif mark == "strikethrough":
-                wrapped = f"\\sout{{{wrapped}}}"
+                # R-4.2: stripped in v1 — text passes through unmarked.
+                pass
             elif mark == "superscript":
                 wrapped = f"\\textsuperscript{{{wrapped}}}"
             elif mark == "subscript":
@@ -468,6 +522,66 @@ class BlocksToLatexConverter:
         # toc_marker (v1 upgrade) — let the template's TOC handle this.
         # Emit a comment for traceability.
         return f"% structural block {block.get('id')} (CIR type={cir_type!r})"
+
+
+# ---------------------------------------------------------------------------
+# Doc 23 R-3.4 — single-rendering invariant
+# ---------------------------------------------------------------------------
+
+def _collapse_adjacent_duplicate_chapter_headings(
+    blocks: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Drop adjacent chapter_heading blocks whose (chapter_number,
+    chapter_title) is identical to the immediately preceding
+    chapter_heading.
+
+    Per Doc 23 R-3.4: if two consecutive chapter_heading blocks share
+    identical chapter_number AND identical chapter_title, collapse to
+    a single rendering. Each collapse emits a `logger.warning` carrying
+    the dropped block's id so an operator can trace the upstream cause
+    (per W1 I-4 this should not occur on a clean artifact).
+
+    "Consecutive" is interpreted strictly — only two chapter_heading
+    blocks with NO intervening blocks of any role collapse. A chapter
+    heading followed by a body paragraph followed by an identical
+    chapter heading is left untouched (the second is more likely a
+    legitimate repeat than a producer bug; treating it as a collapse
+    target would silently drop content).
+
+    Returns a new list; does not mutate input. Non-chapter_heading
+    blocks pass through unchanged.
+    """
+    if not blocks:
+        return blocks
+
+    out: List[Dict[str, Any]] = []
+    prev_chapter_key: Optional[tuple] = None
+
+    for block in blocks:
+        if block.get("role") == "chapter_heading":
+            key = (
+                block.get("chapter_number"),
+                block.get("chapter_title"),
+            )
+            if prev_chapter_key is not None and key == prev_chapter_key:
+                logger.warning(
+                    "R-3.4: collapsing adjacent duplicate chapter_heading "
+                    "block %r (chapter_number=%r, chapter_title=%r). "
+                    "Per W1 I-4 this should not occur — investigate the "
+                    "upstream producer.",
+                    block.get("id"),
+                    block.get("chapter_number"),
+                    block.get("chapter_title"),
+                )
+                continue  # drop the duplicate
+            prev_chapter_key = key
+            out.append(block)
+        else:
+            # Any non-chapter_heading block resets the adjacency window.
+            prev_chapter_key = None
+            out.append(block)
+
+    return out
 
 
 # ---------------------------------------------------------------------------
