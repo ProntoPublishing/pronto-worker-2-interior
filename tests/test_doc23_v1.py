@@ -376,5 +376,74 @@ class Test_R3_5_R4_4_FirstParagraphNoIndent(unittest.TestCase):
         self.assertIn("An ordinary paragraph.", out)
 
 
+class Test_R4_2_StripUnderlineStrikethrough(unittest.TestCase):
+    """R-4.2 — `underline` and `strikethrough` span marks are stripped
+    in v1. The underlying span text passes through to LaTeX unmarked.
+    Other canonical span marks (italic, bold, small_caps, code,
+    superscript, subscript) are unaffected.
+    """
+
+    def setUp(self) -> None:
+        self.converter = BlocksToLatexConverter()
+
+    def _convert_with_marks(self, text: str, marks: list[str]) -> str:
+        block = {
+            "id": "b1", "type": "paragraph", "role": "body_paragraph",
+            "spans": [{"text": text, "marks": marks}],
+        }
+        return self.converter.convert([block], params={}, degraded_mode=False)
+
+    def test_R0402_underline_mark_stripped(self) -> None:
+        out = self._convert_with_marks("emphasized phrase", ["underline"])
+        self.assertNotIn(r"\underline", out)
+        self.assertIn("emphasized phrase", out)
+
+    def test_R0402_strikethrough_mark_stripped(self) -> None:
+        out = self._convert_with_marks("crossed out", ["strikethrough"])
+        self.assertNotIn(r"\sout", out)
+        self.assertIn("crossed out", out)
+
+    def test_R0402_italic_still_rendered(self) -> None:
+        """Sanity: only underline + strikethrough strip; italic stays."""
+        out = self._convert_with_marks("emphatic", ["italic"])
+        self.assertIn(r"\textit{emphatic}", out)
+
+    def test_R0402_bold_still_rendered(self) -> None:
+        out = self._convert_with_marks("loud", ["bold"])
+        self.assertIn(r"\textbf{loud}", out)
+
+    def test_R0402_underline_combined_with_italic_keeps_italic(self) -> None:
+        """A span carrying both underline and italic marks: underline
+        strips, italic renders. Order matters in _wrap_with_marks since
+        marks layer; verify the italic survives regardless."""
+        out_under_first = self._convert_with_marks(
+            "complex", ["underline", "italic"]
+        )
+        out_italic_first = self._convert_with_marks(
+            "complex", ["italic", "underline"]
+        )
+        self.assertIn(r"\textit{complex}", out_under_first)
+        self.assertIn(r"\textit{complex}", out_italic_first)
+        self.assertNotIn(r"\underline", out_under_first)
+        self.assertNotIn(r"\underline", out_italic_first)
+
+    def test_R0402_strikethrough_combined_with_bold_keeps_bold(self) -> None:
+        out = self._convert_with_marks("bold-and-struck", ["bold", "strikethrough"])
+        self.assertIn(r"\textbf{bold-and-struck}", out)
+        self.assertNotIn(r"\sout", out)
+
+    def test_R0402_super_and_subscript_still_render(self) -> None:
+        super_out = self._convert_with_marks("st", ["superscript"])
+        sub_out = self._convert_with_marks("2", ["subscript"])
+        self.assertIn(r"\textsuperscript{st}", super_out)
+        self.assertIn(r"\textsubscript{2}", sub_out)
+
+    def test_R0402_small_caps_and_code_still_render(self) -> None:
+        sc_out = self._convert_with_marks("LITERAL", ["small_caps"])
+        code_out = self._convert_with_marks("verb", ["code"])
+        self.assertIn(r"\textsc{LITERAL}", sc_out)
+        self.assertIn(r"\texttt{verb}", code_out)
+
+
 if __name__ == "__main__":
     unittest.main()

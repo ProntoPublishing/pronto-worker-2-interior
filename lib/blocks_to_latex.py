@@ -233,6 +233,12 @@ class BlocksToLatexConverter:
         canonical vocabulary are dropped silently (the v1 reader already
         normalizes what it carries through; W1 v5.0 producer emits only
         canonical marks).
+
+        Doc 23 R-4.2 — `underline` and `strikethrough` marks are stripped
+        in v1 (the underlying span text is preserved, the mark is
+        not rendered). Underline in print fiction is dated; strikethrough
+        is rare and usually accidental from track-changes leakage. Both
+        are no-ops here.
         """
         if not marks:
             return escaped_text
@@ -247,9 +253,11 @@ class BlocksToLatexConverter:
             elif mark == "code":
                 wrapped = f"\\texttt{{{wrapped}}}"
             elif mark == "underline":
-                wrapped = f"\\underline{{{wrapped}}}"
+                # R-4.2: stripped in v1 — text passes through unmarked.
+                pass
             elif mark == "strikethrough":
-                wrapped = f"\\sout{{{wrapped}}}"
+                # R-4.2: stripped in v1 — text passes through unmarked.
+                pass
             elif mark == "superscript":
                 wrapped = f"\\textsuperscript{{{wrapped}}}"
             elif mark == "subscript":
