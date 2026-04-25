@@ -1143,5 +1143,132 @@ class Test_LongQuiet_V2Path(unittest.TestCase):
             self.assertTrue(ch.get("chapter_title"))
 
 
+# ---------------------------------------------------------------------------
+# Production unblock 2026-04-25 — warning_handler v2.0 contract tolerance
+# ---------------------------------------------------------------------------
+#
+# Production W1 v5.0.0-a1 emitted a real artifact whose 12 warnings used
+# the v2.0 schema's `rule` field. W2's warning_handler.evaluate() was
+# still reading `warning['code']` (v1.0 vocabulary), so it crashed with
+# KeyError on the first warning of the first end-to-end success of the
+# W1→W2 chain on v5. The patch makes evaluate() tolerant of both shapes
+# via _warning_code(); these tests pin the contract so it doesn't
+# silently regress.
+
+from lib.warning_handler import WarningHandler
+
+
+class Test_WarningHandler_V2Tolerance(unittest.TestCase):
+    """v2.0 warnings (Doc 22 V-### / H-### rule IDs) must not crash
+    evaluate(). They land in 'unknown' today and fall through to
+    PROCEED — that's correct v5 behavior; the rules are advisory.
+    """
+
+    def setUp(self):
+        self.handler = WarningHandler()
+
+    def test_v2_warning_shape_does_not_crash(self):
+        """Single V-001 warning, v2.0 shape — no 'code' field. The
+        handler must read 'rule' instead and produce a decision.
+        """
+        warnings = [{
+            "rule": "V-001",
+            "severity": "medium",
+            "detail": "chapter numbers [1, 2, 4, 5] — gap between 2 and 4",
+            "blocks": ["b_000013", "b_000021"],
+        }]
+        decision = self.handler.evaluate(warnings)
+        self.assertEqual(decision.action, "PROCEED")
+
+    def test_full_v2_warning_set_proceeds(self):
+        """All five v2.0 rule IDs the v1 producer + W1 v2 emit. Until a
+        proper v2.0 rule-bucket mapping lands, every one falls through
+        to PROCEED. This test pins that interim behavior so a future
+        rule-bucket refactor doesn't quietly change it.
+        """
+        warnings = [
+            {"rule": "V-001", "severity": "medium", "detail": "chapter gap"},
+            {"rule": "V-002", "severity": "medium", "detail": "heading style mismatch"},
+            {"rule": "V-003", "severity": "high", "detail": "possible missing space: 'theweather'"},
+            {"rule": "V-004", "severity": "high", "detail": "tracked-changes residue"},
+            {"rule": "H-001", "severity": "medium", "detail": "intake author divergence"},
+        ]
+        decision = self.handler.evaluate(warnings)
+        self.assertEqual(decision.action, "PROCEED")
+
+    def test_real_long_quiet_v2_warnings_proceed(self):
+        """End-to-end against the real Long Quiet v2.0 artifact's
+        warnings. The 2 warnings in that artifact (V-003 + H-001) must
+        flow through to PROCEED without raising.
+        """
+        with open(LONG_QUIET_DIR / "manuscript.v2.json", "r", encoding="utf-8") as f:
+            art = json.load(f)
+        warnings = art.get("warnings") or []
+        self.assertGreater(len(warnings), 0,
+                           "Long Quiet v2 fixture has no warnings — fixture stale")
+        decision = self.handler.evaluate(warnings)
+        self.assertEqual(decision.action, "PROCEED")
+
+    def test_malformed_warning_skipped_not_crashed(self):
+        """A warning with neither 'rule' nor 'code' must be skipped,
+        not crashed. The handler should still return a decision based
+        on the rest of the warnings list.
+        """
+        warnings = [
+            {"severity": "medium", "detail": "missing identifier"},  # malformed
+            {"rule": "V-001", "severity": "medium", "detail": "chapter gap"},
+        ]
+        decision = self.handler.evaluate(warnings)
+        self.assertEqual(decision.action, "PROCEED")
+
+    def test_mixed_v1_v2_shapes_handled(self):
+        """Backward compatibility: an artifact carrying both v1.0
+        ('code'-shaped) and v2.0 ('rule'-shaped) warnings should be
+        handled correctly. v1.0 codes still match the legacy bucket
+        maps; v2.0 rules pass through.
+        """
+        warnings = [
+            {"code": "DETECTED_FOOTNOTES", "severity": "medium",
+             "detail": "footnote in chapter 3"},
+            {"rule": "V-001", "severity": "medium", "detail": "chapter gap"},
+        ]
+        decision = self.handler.evaluate(warnings)
+        # DETECTED_FOOTNOTES is in degrade_rules → DEGRADE outcome.
+        self.assertEqual(decision.action, "DEGRADE")
+        self.assertIn("Footnotes rendered inline", decision.degradations or [])
+
+
+class Test_WarningHandler_V1BackCompat(unittest.TestCase):
+    """The legacy v1.0 path still works. The patch must not break
+    the original behavior for code-shaped warnings.
+    """
+
+    def setUp(self):
+        self.handler = WarningHandler()
+
+    def test_v1_fail_code_still_fails(self):
+        warnings = [{"code": "DETECTED_IMAGES", "severity": "high",
+                     "detail": "image found"}]
+        decision = self.handler.evaluate(warnings)
+        self.assertEqual(decision.action, "FAIL")
+        self.assertIn("Images not supported", decision.reason or "")
+
+    def test_v1_degrade_code_still_degrades(self):
+        warnings = [{"code": "OCR_ARTIFACTS", "severity": "medium",
+                     "detail": "OCR errors"}]
+        decision = self.handler.evaluate(warnings)
+        self.assertEqual(decision.action, "DEGRADE")
+
+    def test_v1_proceed_code_still_proceeds(self):
+        warnings = [{"code": "LOW_CHAPTER_CONFIDENCE", "severity": "low",
+                     "detail": "chapter confidence below threshold"}]
+        decision = self.handler.evaluate(warnings)
+        self.assertEqual(decision.action, "PROCEED")
+
+    def test_no_warnings_proceeds(self):
+        decision = self.handler.evaluate([])
+        self.assertEqual(decision.action, "PROCEED")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
