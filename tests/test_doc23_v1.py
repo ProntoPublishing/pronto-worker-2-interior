@@ -1042,5 +1042,175 @@ class Test_R2_3_CopyrightPage(unittest.TestCase):
         self.assertIn(r"\$", out)
 
 
+class Test_R2_4_DedicationRendering(unittest.TestCase):
+    """R-2.4 — dedication on its own recto page, italic, vertically
+    centered, single-line where possible. Omitted entirely if no
+    dedication block is present.
+    """
+
+    def setUp(self) -> None:
+        self.c = BlocksToLatexConverter()
+
+    def _dedication_block(self, text: str) -> dict:
+        return {
+            "id": "b1", "type": "paragraph",
+            "role": "front_matter", "subtype": "dedication",
+            "spans": [{"text": text, "marks": []}],
+        }
+
+    def test_R0204_dedication_rendered_when_present(self) -> None:
+        block = self._dedication_block("For Mom.")
+        out = self.c.convert([block], params={})
+        self.assertIn(r"\textit{For Mom.}", out)
+
+    def test_R0204_dedication_centered(self) -> None:
+        block = self._dedication_block("For Mom.")
+        out = self.c.convert([block], params={})
+        self.assertIn(r"\begin{center}", out)
+        self.assertIn(r"\end{center}", out)
+
+    def test_R0204_dedication_vertically_centered(self) -> None:
+        block = self._dedication_block("For Mom.")
+        out = self.c.convert([block], params={})
+        # \vspace*{\fill} above and below centers the content vertically.
+        self.assertEqual(out.count(r"\vspace*{\fill}"), 2)
+
+    def test_R0204_dedication_lands_on_recto_via_cleardoublepage(self) -> None:
+        block = self._dedication_block("For Mom.")
+        out = self.c.convert([block], params={})
+        self.assertEqual(out.count(r"\cleardoublepage"), 2,
+                         "R-2.4: \\cleardoublepage on both sides — recto "
+                         "for dedication AND recto for next subtype")
+
+    def test_R0204_dedication_thispagestyle_empty(self) -> None:
+        """Dedication page suppresses the page number (R-6.2)."""
+        block = self._dedication_block("For Mom.")
+        out = self.c.convert([block], params={})
+        self.assertIn(r"\thispagestyle{empty}", out)
+
+    def test_R0204_no_dedication_block_no_dedication_output(self) -> None:
+        """If no dedication block is present in the artifact, the
+        front-matter LaTeX should contain no dedication markup."""
+        body = _make_body("b1", "Just body, no front matter.")
+        front, body_latex = self.c.convert_split(
+            [body], params={}, degraded_mode=False,
+        )
+        self.assertEqual(front, "",
+                         "No front matter blocks → empty front-matter LaTeX")
+
+
+class Test_R2_4_R2_6_FrontMatterSubtypeOrdering(unittest.TestCase):
+    """R-2.4 + R-2.6 — front-matter blocks render in fixed canonical
+    subtype order regardless of source-document order. Doc 23's
+    house-style enforcement: a misordered manuscript still produces
+    a correctly-ordered Pronto Standard Edition.
+    """
+
+    def setUp(self) -> None:
+        self.c = BlocksToLatexConverter()
+
+    def _fm(self, block_id: str, subtype: str, text: str) -> dict:
+        return {
+            "id": block_id, "type": "paragraph",
+            "role": "front_matter", "subtype": subtype,
+            "spans": [{"text": text, "marks": []}],
+        }
+
+    def test_R0204_dedication_renders_first(self) -> None:
+        """Dedication has rank 0 — sorts before all other subtypes
+        regardless of source order."""
+        preface = self._fm("b1", "preface", "Preface text.")
+        dedication = self._fm("b2", "dedication", "Dedication text.")
+        front, _ = self.c.convert_split(
+            [preface, dedication], params={}, degraded_mode=False,
+        )
+        d_idx = front.find("Dedication text.")
+        p_idx = front.find("Preface text.")
+        self.assertGreater(d_idx, -1, "dedication missing from front")
+        self.assertGreater(p_idx, -1, "preface missing from front")
+        self.assertLess(d_idx, p_idx,
+                        "Dedication must render before preface (subtype rank)")
+
+    def test_R0206_canonical_subtype_order(self) -> None:
+        """Foreword → preface → prologue → introduction → note_to_reader
+        → epigraph → generic. Same rule: source-doc order is overridden."""
+        # Provide blocks in REVERSE canonical order; expect canonical.
+        blocks = [
+            self._fm("b1", "epigraph",       "EPI"),
+            self._fm("b2", "note_to_reader", "NTR"),
+            self._fm("b3", "introduction",   "INTRO"),
+            self._fm("b4", "prologue",       "PRO"),
+            self._fm("b5", "preface",        "PRE"),
+            self._fm("b6", "foreword",       "FOR"),
+        ]
+        front, _ = self.c.convert_split(
+            blocks, params={}, degraded_mode=False,
+        )
+        positions = {
+            t: front.find(t)
+            for t in ("FOR", "PRE", "PRO", "INTRO", "NTR", "EPI")
+        }
+        # All present.
+        for t, idx in positions.items():
+            self.assertGreater(idx, -1, f"{t} missing from front")
+        # Canonical order.
+        ordered = sorted(positions.keys(), key=lambda t: positions[t])
+        self.assertEqual(
+            ordered, ["FOR", "PRE", "PRO", "INTRO", "NTR", "EPI"],
+            f"Front matter not in canonical order; got {ordered!r}",
+        )
+
+    def test_R0206_unknown_subtype_sorts_last(self) -> None:
+        """Subtypes not in the canonical map (e.g. generic, custom)
+        sort after all known subtypes."""
+        blocks = [
+            self._fm("b1", "weirdo_subtype", "UNKNOWN"),
+            self._fm("b2", "preface",        "PRE"),
+        ]
+        front, _ = self.c.convert_split(
+            blocks, params={}, degraded_mode=False,
+        )
+        self.assertLess(front.find("PRE"), front.find("UNKNOWN"))
+
+    def test_R0206_stable_within_same_rank(self) -> None:
+        """Two blocks of the same subtype preserve source-document
+        order (Python's sort is stable)."""
+        blocks = [
+            self._fm("b1", "preface", "First preface."),
+            self._fm("b2", "preface", "Second preface."),
+        ]
+        front, _ = self.c.convert_split(
+            blocks, params={}, degraded_mode=False,
+        )
+        self.assertLess(
+            front.find("First preface."),
+            front.find("Second preface."),
+            "Same-rank blocks must preserve source order (stable sort)",
+        )
+
+    def test_R0206_generic_subtype_falls_to_default_rank(self) -> None:
+        """The catch-all 'generic' subtype sorts after all known
+        named subtypes."""
+        blocks = [
+            self._fm("b1", "generic", "GENERIC"),
+            self._fm("b2", "foreword", "FOR"),
+        ]
+        front, _ = self.c.convert_split(
+            blocks, params={}, degraded_mode=False,
+        )
+        self.assertLess(front.find("FOR"), front.find("GENERIC"))
+
+    def test_R0206_other_front_matter_starts_on_recto(self) -> None:
+        """Each non-dedication front-matter subtype starts on a recto
+        via leading \\cleardoublepage."""
+        block = self._fm("b1", "preface", "Preface text.")
+        front, _ = self.c.convert_split(
+            [block], params={}, degraded_mode=False,
+        )
+        self.assertIn(r"\cleardoublepage", front)
+        # \chapter* renders the heading.
+        self.assertIn(r"\chapter*{Preface text.}", front)
+
+
 if __name__ == "__main__":
     unittest.main()
