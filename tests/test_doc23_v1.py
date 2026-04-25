@@ -294,5 +294,87 @@ class Test_R3_4_SingleRenderingInvariant(unittest.TestCase):
         self.assertEqual(latex.count(r"\chapter*{Prologue}"), 1)
 
 
+class Test_R3_5_R4_4_FirstParagraphNoIndent(unittest.TestCase):
+    """R-3.5 + R-4.4 — first paragraph after chapter heading or scene
+    break renders without first-line indent. Shared mechanism: a
+    next_paragraph_no_indent flag in convert() set on chapter_heading
+    or scene_break, consumed by the next body_paragraph (which gets a
+    `\\noindent ` prefix), cleared by any other intervening role.
+    """
+
+    def setUp(self) -> None:
+        self.converter = BlocksToLatexConverter()
+
+    def _convert(self, blocks):
+        return self.converter.convert(blocks, params={}, degraded_mode=False)
+
+    # -- R-3.5 (after chapter_heading) ---------------------------------
+    def test_R0305_first_para_after_chapter_has_noindent(self) -> None:
+        ch = _make_chapter("b1", 1, "Beginning")
+        body = _make_body("b2", "It was a quiet morning.")
+        out = self._convert([ch, body])
+        # \noindent must appear immediately before the body paragraph
+        # text — i.e. the body paragraph line starts with \noindent.
+        self.assertIn(r"\noindent It was a quiet morning.", out)
+
+    def test_R0305_only_FIRST_para_after_chapter_gets_noindent(self) -> None:
+        ch = _make_chapter("b1", 1, "Beginning")
+        body1 = _make_body("b2", "First paragraph.")
+        body2 = _make_body("b3", "Second paragraph.")
+        out = self._convert([ch, body1, body2])
+        self.assertIn(r"\noindent First paragraph.", out)
+        # The second paragraph indents normally — no \noindent prefix.
+        self.assertNotIn(r"\noindent Second paragraph.", out)
+
+    def test_R0305_intervening_block_clears_noindent_flag(self) -> None:
+        """A list_item between chapter_heading and body_paragraph
+        clears the flag — the body paragraph indents normally."""
+        ch = _make_chapter("b1", 1, "Beginning")
+        list_block = {
+            "id": "b2", "type": "paragraph", "role": "list_item",
+            "spans": [{"text": "An interrupting list item.", "marks": []}],
+        }
+        body = _make_body("b3", "Body text follows.")
+        out = self._convert([ch, list_block, body])
+        self.assertNotIn(r"\noindent Body text follows.", out)
+
+    # -- R-4.4 (after scene_break) -------------------------------------
+    def test_R0404_first_para_after_scene_break_has_noindent(self) -> None:
+        body0 = _make_body("b1", "Closing of the prior scene.")
+        sb = {"id": "b2", "type": "paragraph", "role": "scene_break"}
+        body1 = _make_body("b3", "A new scene begins.")
+        out = self._convert([body0, sb, body1])
+        self.assertIn(r"\noindent A new scene begins.", out)
+
+    def test_R0404_only_FIRST_para_after_scene_break_gets_noindent(
+        self,
+    ) -> None:
+        sb = {"id": "b1", "type": "paragraph", "role": "scene_break"}
+        body1 = _make_body("b2", "First scene paragraph.")
+        body2 = _make_body("b3", "Second scene paragraph.")
+        out = self._convert([sb, body1, body2])
+        self.assertIn(r"\noindent First scene paragraph.", out)
+        self.assertNotIn(r"\noindent Second scene paragraph.", out)
+
+    # -- Shared mechanism ----------------------------------------------
+    def test_chapter_then_sceneBreak_then_body_keeps_noindent(self) -> None:
+        """Chapter sets the flag; scene_break re-sets the same flag;
+        body paragraph still gets \\noindent. Tests that the flag
+        composes across both triggers without a gap."""
+        ch = _make_chapter("b1", 1, "Beginning")
+        sb = {"id": "b2", "type": "paragraph", "role": "scene_break"}
+        body = _make_body("b3", "Resumed content.")
+        out = self._convert([ch, sb, body])
+        self.assertIn(r"\noindent Resumed content.", out)
+
+    def test_body_with_no_chapter_or_scene_break_indents_normally(
+        self,
+    ) -> None:
+        body = _make_body("b1", "An ordinary paragraph.")
+        out = self._convert([body])
+        self.assertNotIn(r"\noindent An ordinary paragraph.", out)
+        self.assertIn("An ordinary paragraph.", out)
+
+
 if __name__ == "__main__":
     unittest.main()

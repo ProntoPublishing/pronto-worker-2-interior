@@ -145,6 +145,14 @@ class BlocksToLatexConverter:
         out: List[str] = []
         list_state = _ListState()
 
+        # Doc 23 R-3.5 + R-4.4 — first-paragraph-no-indent. The first
+        # body_paragraph after a chapter_heading or scene_break renders
+        # with `\noindent ` prefix. Any other intervening block clears
+        # the flag (R-3.5 / R-4.4 say "first paragraph immediately
+        # following"; a list_item or blockquote between consumes the
+        # adjacency). The flag clears after one body_paragraph.
+        next_paragraph_no_indent = False
+
         for block in blocks:
             role = block.get("role")
             if role is None:
@@ -172,6 +180,23 @@ class BlocksToLatexConverter:
             handler = getattr(self, handler_name)
             ctx = {"degraded": degraded_mode, "params": params}
             latex = handler(block, ctx)
+
+            # R-3.5 / R-4.4: prepend \noindent to the first body_paragraph
+            # after a chapter_heading or scene_break.
+            if (role == "body_paragraph"
+                    and next_paragraph_no_indent
+                    and latex):
+                latex = "\\noindent " + latex
+
+            # Update the no-indent flag for the NEXT iteration. Set on
+            # chapter_heading / scene_break; clear on every other role
+            # (the body_paragraph that consumed it, or any intervening
+            # structure that broke adjacency).
+            if role in ("chapter_heading", "scene_break"):
+                next_paragraph_no_indent = True
+            else:
+                next_paragraph_no_indent = False
+
             if latex:
                 out.append(latex)
                 out.append("")
