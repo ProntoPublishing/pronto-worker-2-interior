@@ -134,6 +134,14 @@ class BlocksToLatexConverter:
             f"(degraded={degraded_mode})"
         )
 
+        # Doc 23 R-3.4 — single-rendering invariant. Collapse adjacent
+        # duplicate chapter_heading blocks BEFORE iteration. Per W1
+        # contract I-4 this should never occur on a clean artifact;
+        # the collapse is a defensive measure against producer drift,
+        # and each collapse emits a warning so the operator can chase
+        # the upstream cause.
+        blocks = _collapse_adjacent_duplicate_chapter_headings(blocks)
+
         out: List[str] = []
         list_state = _ListState()
 
@@ -468,6 +476,66 @@ class BlocksToLatexConverter:
         # toc_marker (v1 upgrade) — let the template's TOC handle this.
         # Emit a comment for traceability.
         return f"% structural block {block.get('id')} (CIR type={cir_type!r})"
+
+
+# ---------------------------------------------------------------------------
+# Doc 23 R-3.4 — single-rendering invariant
+# ---------------------------------------------------------------------------
+
+def _collapse_adjacent_duplicate_chapter_headings(
+    blocks: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Drop adjacent chapter_heading blocks whose (chapter_number,
+    chapter_title) is identical to the immediately preceding
+    chapter_heading.
+
+    Per Doc 23 R-3.4: if two consecutive chapter_heading blocks share
+    identical chapter_number AND identical chapter_title, collapse to
+    a single rendering. Each collapse emits a `logger.warning` carrying
+    the dropped block's id so an operator can trace the upstream cause
+    (per W1 I-4 this should not occur on a clean artifact).
+
+    "Consecutive" is interpreted strictly — only two chapter_heading
+    blocks with NO intervening blocks of any role collapse. A chapter
+    heading followed by a body paragraph followed by an identical
+    chapter heading is left untouched (the second is more likely a
+    legitimate repeat than a producer bug; treating it as a collapse
+    target would silently drop content).
+
+    Returns a new list; does not mutate input. Non-chapter_heading
+    blocks pass through unchanged.
+    """
+    if not blocks:
+        return blocks
+
+    out: List[Dict[str, Any]] = []
+    prev_chapter_key: Optional[tuple] = None
+
+    for block in blocks:
+        if block.get("role") == "chapter_heading":
+            key = (
+                block.get("chapter_number"),
+                block.get("chapter_title"),
+            )
+            if prev_chapter_key is not None and key == prev_chapter_key:
+                logger.warning(
+                    "R-3.4: collapsing adjacent duplicate chapter_heading "
+                    "block %r (chapter_number=%r, chapter_title=%r). "
+                    "Per W1 I-4 this should not occur — investigate the "
+                    "upstream producer.",
+                    block.get("id"),
+                    block.get("chapter_number"),
+                    block.get("chapter_title"),
+                )
+                continue  # drop the duplicate
+            prev_chapter_key = key
+            out.append(block)
+        else:
+            # Any non-chapter_heading block resets the adjacency window.
+            prev_chapter_key = None
+            out.append(block)
+
+    return out
 
 
 # ---------------------------------------------------------------------------

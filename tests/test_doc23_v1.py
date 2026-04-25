@@ -19,6 +19,10 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from lib.render_params import RenderParams  # noqa: E402
+from lib.blocks_to_latex import (  # noqa: E402
+    BlocksToLatexConverter,
+    _collapse_adjacent_duplicate_chapter_headings,
+)
 
 
 class Test_R1_TypographyParameters(unittest.TestCase):
@@ -169,6 +173,125 @@ class Test_TemplateFillSurface(unittest.TestCase):
         rendered = self._apply_fills(self.fiction)
         self.assertIn(r"\fontsize{10.5pt}{14pt}\selectfont", rendered)
         self.assertIn(r"\setlength{\parindent}{1em}", rendered)
+
+
+def _make_chapter(block_id: str, number, title: str, *, role: str = "chapter_heading") -> dict:
+    """Build a synthetic v2 chapter_heading block for unit tests."""
+    return {
+        "id": block_id,
+        "type": "heading",
+        "role": role,
+        "heading_level": 2,
+        "chapter_number": number,
+        "chapter_title": title,
+        "spans": [{"text": title, "marks": []}],
+    }
+
+
+def _make_body(block_id: str, text: str) -> dict:
+    return {
+        "id": block_id,
+        "type": "paragraph",
+        "role": "body_paragraph",
+        "spans": [{"text": text, "marks": []}],
+    }
+
+
+class Test_R3_4_SingleRenderingInvariant(unittest.TestCase):
+    """R-3.4 — single rendering per chapter_heading block + collapse
+    of adjacent duplicates (with warning)."""
+
+    # -- Defensive collapse pre-pass -----------------------------------
+    def test_R0304_adjacent_duplicate_blocks_collapse_to_one(self) -> None:
+        a = _make_chapter("b1", 1, "The Beginning")
+        b = _make_chapter("b2", 1, "The Beginning")  # exact duplicate
+        with self.assertLogs("lib.blocks_to_latex", level="WARNING") as caught:
+            out = _collapse_adjacent_duplicate_chapter_headings([a, b])
+        self.assertEqual(len(out), 1, "duplicate should collapse")
+        self.assertEqual(out[0]["id"], "b1", "first occurrence wins")
+        self.assertTrue(
+            any("R-3.4" in r and "b2" in r for r in caught.output),
+            f"expected R-3.4 warning naming b2; got {caught.output!r}",
+        )
+
+    def test_R0304_three_adjacent_duplicates_collapse_to_one_with_two_warnings(
+        self,
+    ) -> None:
+        a = _make_chapter("b1", 1, "Same")
+        b = _make_chapter("b2", 1, "Same")
+        c = _make_chapter("b3", 1, "Same")
+        with self.assertLogs("lib.blocks_to_latex", level="WARNING") as caught:
+            out = _collapse_adjacent_duplicate_chapter_headings([a, b, c])
+        self.assertEqual(len(out), 1)
+        warning_msgs = [r for r in caught.output if "R-3.4" in r]
+        self.assertEqual(len(warning_msgs), 2,
+                         f"expected 2 warnings; got {warning_msgs!r}")
+
+    def test_R0304_different_titles_both_kept(self) -> None:
+        a = _make_chapter("b1", 1, "First")
+        b = _make_chapter("b2", 2, "Second")
+        # No warning expected. assertLogs(...) requires at least one log
+        # at the level, so use assertNoLogs (3.10+).
+        out = _collapse_adjacent_duplicate_chapter_headings([a, b])
+        self.assertEqual([x["id"] for x in out], ["b1", "b2"])
+
+    def test_R0304_intervening_body_block_preserves_both(self) -> None:
+        """Strict adjacency: identical chapter heads with a body
+        paragraph between them are NOT collapsed. They're more likely
+        a legitimate repeat than producer drift; conservatively
+        preserve content."""
+        a = _make_chapter("b1", 1, "Same")
+        body = _make_body("b2", "Some intervening content.")
+        c = _make_chapter("b3", 1, "Same")
+        out = _collapse_adjacent_duplicate_chapter_headings([a, body, c])
+        self.assertEqual([x["id"] for x in out], ["b1", "b2", "b3"])
+
+    def test_R0304_same_number_different_title_both_kept(self) -> None:
+        a = _make_chapter("b1", 1, "Title One")
+        b = _make_chapter("b2", 1, "Title Two")  # same number, different title
+        out = _collapse_adjacent_duplicate_chapter_headings([a, b])
+        self.assertEqual([x["id"] for x in out], ["b1", "b2"])
+
+    def test_R0304_same_title_different_number_both_kept(self) -> None:
+        a = _make_chapter("b1", 1, "Title")
+        b = _make_chapter("b2", 2, "Title")
+        out = _collapse_adjacent_duplicate_chapter_headings([a, b])
+        self.assertEqual([x["id"] for x in out], ["b1", "b2"])
+
+    def test_R0304_empty_input_returns_empty(self) -> None:
+        self.assertEqual(_collapse_adjacent_duplicate_chapter_headings([]), [])
+
+    def test_R0304_no_chapter_headings_passes_through(self) -> None:
+        body1 = _make_body("b1", "First.")
+        body2 = _make_body("b2", "Second.")
+        out = _collapse_adjacent_duplicate_chapter_headings([body1, body2])
+        self.assertEqual(out, [body1, body2])
+
+    # -- The first sentence of R-3.4 (single rendering per block) ------
+    def test_R0304_one_chapter_heading_block_renders_one_chapter_command(
+        self,
+    ) -> None:
+        """A single chapter_heading block carrying both chapter_number
+        and chapter_title produces exactly ONE \\chapter command, not
+        two (the bug R-3.4 codifies the absence of)."""
+        block = _make_chapter("b1", 1, "The Beginning")
+        latex = BlocksToLatexConverter().convert(
+            [block], params={}, degraded_mode=False,
+        )
+        # Numbered chapters use \chapter (no asterisk); count the
+        # exact command name without matching \chapter*.
+        chapter_count = len(re.findall(r"\\chapter\{", latex))
+        chapter_star_count = len(re.findall(r"\\chapter\*\{", latex))
+        self.assertEqual(chapter_count, 1,
+                         f"expected exactly 1 \\chapter; got {chapter_count}\n{latex}")
+        self.assertEqual(chapter_star_count, 0)
+
+    def test_R0304_unnumbered_chapter_renders_one_chapter_star(self) -> None:
+        block = _make_chapter("b1", None, "Prologue")
+        latex = BlocksToLatexConverter().convert(
+            [block], params={}, degraded_mode=False,
+        )
+        self.assertEqual(latex.count(r"\chapter*{Prologue}"), 1)
 
 
 if __name__ == "__main__":
