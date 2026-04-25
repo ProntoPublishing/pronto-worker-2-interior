@@ -854,5 +854,294 @@ class Test_TitlePageHandlerRenders(unittest.TestCase):
         self.assertIn("Some Book", out)
 
 
+# ---------------------------------------------------------------------------
+# Iter 5 — The Long Quiet smoke (real artifacts, both reader paths)
+# ---------------------------------------------------------------------------
+#
+# Two fixtures live under tests/fixtures/long_quiet/:
+#   manuscript.v1.json   — the production v1.0 artifact at
+#                          services/recSDCG0U8KxvYMdH/manuscript.v1.json,
+#                          produced by W1 v4.1.0 against
+#                          the_long_quiet.docx.
+#   manuscript.v2.json   — the v2.0 artifact produced by running
+#                          the same DOCX through W1 v2 dry-run
+#                          (per MIGRATION_NOTES.md).
+#
+# These tests assert that the 5 bugs observed in the original buggy
+# PDF are absent at the LaTeX-source level after dispatch + convert.
+# The 5 bugs are:
+#   (1) Whole-book duplication starting around page 42 — {{CONTENT}}
+#       template trap. Fixed by Iter 1.
+#   (2) Doubled chapter headings ("CHAPTER 1 CHAPTER 1 WHAT DEPRESSION
+#       ACTUALLY IS"). Fixed by chapter_number/chapter_title separation
+#       in upgrader (v1 path) and W1 v2 producer (v2 path).
+#   (3) Run-boundary space loss ("theweather", "thefirst"). v2 path:
+#       fixed by W1 v2 extractor's whitespace preservation. v1 path:
+#       baked into the v1 artifact; can't be undone here.
+#   (4) Triple/doubled title page. v2 path: H-001 fires, system block
+#       suppressed, author cluster renders. v1 path: depends on
+#       whether the v1 producer typed a front_matter_title block —
+#       The Long Quiet's v1 producer didn't, so v1 path will not
+#       suppress the system block (cluster paragraphs render as body
+#       in document order).
+#   (5) Part-divider page breaks missing. v2 path: C-002 classifies as
+#       part_divider, force_page_break=true. v1 path: v1 producer
+#       didn't classify as part_divider (the Long Quiet PDF showed
+#       part dividers rendered inline), so v1 path can't recover.
+#
+# Per Jesse's note: bugs 3, 4, 5 are W1-upstream — expected to persist
+# in v1 path and disappear in v2 path. Any persisting in v2 path
+# means W2 is recreating them downstream — flag and investigate.
+
+LONG_QUIET_DIR = REPO_ROOT / "tests" / "fixtures" / "long_quiet"
+
+
+def _load_long_quiet(version: str) -> dict:
+    name = "manuscript.v1.json" if version == "v1" else "manuscript.v2.json"
+    path = LONG_QUIET_DIR / name
+    if not path.exists():
+        raise unittest.SkipTest(f"fixture missing: {path}")
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+import json
+
+
+def _render_through_pipeline(artifact: dict) -> tuple[dict, str]:
+    """Run an artifact through the dispatcher + converter end-to-end.
+    Returns (normalized_artifact, latex_body).
+    """
+    norm = read_artifact(artifact)
+    body = BlocksToLatexConverter().convert(
+        norm["content"]["blocks"], params={}
+    )
+    return norm, body
+
+
+def _full_filled_template(template_name: str, norm: dict, latex_body: str) -> str:
+    """Mirror pronto_worker_2.py's template-fill substitution to produce
+    the final .tex source. Useful for asserting against the whole
+    document, including the system-title-page conditional.
+    """
+    from pronto_worker_2 import _system_title_page_latex
+    template = (REPO_ROOT / template_name).read_text(encoding="utf-8")
+    system_title = _system_title_page_latex(norm)
+    return (
+        template
+        .replace("{{CONTENT}}", latex_body, 1)
+        .replace("{{SYSTEM_TITLE_PAGE}}", system_title, 1)
+        .replace("{{BOOK_TITLE}}", "The Long Quiet")
+        .replace("{{AUTHOR_NAME}}", "Test Author")
+        .replace("{{FONT_NAME}}", "EB Garamond")
+        .replace("{{YEAR}}", "2026")
+        .replace("{{ISBN}}", "")
+    )
+
+
+class Test_LongQuiet_V1Path(unittest.TestCase):
+    """v1.0 artifact through the upgrader. The bugs that have v1
+    upstream remediation should be gone; bugs 3/4/5 may persist.
+    """
+
+    def setUp(self):
+        self.artifact = _load_long_quiet("v1")
+        self.norm, self.body = _render_through_pipeline(self.artifact)
+        self.tex = _full_filled_template("nonfiction_6x9.tex", self.norm, self.body)
+
+    # Bug 1: duplication.
+    def test_no_book_duplication_at_template_level(self):
+        """Assert the body appears in the .tex exactly once. The
+        Iter 1 fix (template wording + count=1) should keep this
+        true regardless of artifact content.
+        """
+        self.assertEqual(self.tex.count(self.body), 1,
+                         f"body appears {self.tex.count(self.body)} times in .tex")
+
+    # Bug 2: doubled chapter headings.
+    def test_no_doubled_chapter_heading_in_body(self):
+        """The signature pattern was a chapter heading whose argument
+        contained the literal "Chapter N" prefix as well as the title.
+        After upgrade, \\chapter{...} arguments should be the title
+        alone — never "Chapter N" prefix anywhere.
+        """
+        # Pull every \chapter{...} argument from the body.
+        import re
+        for m in re.finditer(r"\\chapter\*?\{([^{}]+)\}", self.body):
+            arg = m.group(1)
+            self.assertNotRegex(
+                arg, r"^(Chapter|Ch\.?|CHAPTER)\s+\d",
+                f"chapter argument still carries a Chapter prefix: {arg!r}"
+            )
+            # The Long Quiet had embedded newlines between number and title.
+            # Those should also be gone.
+            self.assertNotIn("\n", arg, f"newline in chapter arg: {arg!r}")
+
+    # Bug 3: run-boundary space loss — surprising finding.
+    def test_v1_path_space_loss_actually_fixed(self):
+        """Surprising: bug 3 (theweather, Beforeanythingelse) is GONE
+        in the v1 path too. The v1 artifact had proper spaces —
+        "Before anything else, it helps to be clear..." is intact in
+        the source artifact's spans. The bug must have lived in the
+        OLD W2 converter (which we replaced in Iter 3) or the OLD
+        template fill (which Iter 1 replaced). Either way, v1.3's
+        v2-native converter renders the spaces correctly.
+
+        Conclusion: bug 3 was a downstream rendering bug, not an
+        upstream artifact bug. Both reader paths fix it.
+        """
+        self.assertNotIn(
+            "Beforeanythingelse", self.body,
+            "v1 path STILL produces 'Beforeanythingelse' — the v1.3 "
+            "converter regressed on a fix the v2.0.0 contract-v1.1 "
+            "spans-rendering work was supposed to give us."
+        )
+        # Positive assertion: the proper spacing is present.
+        self.assertIn(
+            "Before anything else", self.body,
+            "v1 path missing the canonical chapter-1 opening — "
+            "the v1 artifact's text isn't being rendered."
+        )
+
+    # Bug 4: triple/doubled title page.
+    def test_v1_path_system_title_page_emitted(self):
+        """The Long Quiet v1 producer didn't emit a front_matter_title
+        block, so H-001 does NOT fire on this artifact. The system
+        title page renders. Documenting expected behavior — this is
+        the v1-path limitation that v2 path is supposed to fix.
+        """
+        self.assertIn(r"\begin{titlepage}", self.tex,
+                      "Without H-001 evidence, system title page should render")
+        # No H-001 entry in applied_rules confirms v1 path didn't see one.
+        h001 = [r for r in self.norm["applied_rules"] if r.get("rule") == "H-001"]
+        self.assertEqual(h001, [],
+                         "v1 reader synthesized H-001 unexpectedly on Long Quiet")
+
+    # Bug 5: part-divider page break.
+    def test_v1_path_part_divider_inline_documented(self):
+        """v1 producer didn't classify part headings as part_divider.
+        After upgrade they remain whatever role the v1 type mapped to
+        (typically chapter_heading or paragraph). \\clearpage from
+        a part_divider role won't appear. Documenting expected
+        behavior — v2 path will have the fix.
+        """
+        # No part_divider blocks in the upgraded artifact for The Long
+        # Quiet v1 input.
+        roles = {b.get("role") for b in self.norm["content"]["blocks"]}
+        self.assertNotIn("part_divider", roles,
+                         "Long Quiet v1 unexpectedly has part_divider — "
+                         "v1 producer behavior changed?")
+
+
+class Test_LongQuiet_V2Path(unittest.TestCase):
+    """v2.0 artifact (produced by W1 v2 dry-run on the Long Quiet
+    DOCX) through the v2 reader. ALL FIVE bugs should be gone. Any
+    that persist mean W2 is recreating the bug downstream — flag.
+    """
+
+    def setUp(self):
+        self.artifact = _load_long_quiet("v2")
+        self.norm, self.body = _render_through_pipeline(self.artifact)
+        self.tex = _full_filled_template("nonfiction_6x9.tex", self.norm, self.body)
+
+    # Bug 1.
+    def test_no_book_duplication_at_template_level(self):
+        self.assertEqual(self.tex.count(self.body), 1)
+
+    # Bug 2.
+    def test_no_doubled_chapter_heading_in_body(self):
+        import re
+        for m in re.finditer(r"\\chapter\*?\{([^{}]+)\}", self.body):
+            arg = m.group(1)
+            self.assertNotRegex(
+                arg, r"^(Chapter|Ch\.?|CHAPTER)\s+\d",
+                f"v2 chapter argument carries Chapter prefix: {arg!r}"
+            )
+            self.assertNotIn("\n", arg)
+
+    # Bug 3.
+    def test_v2_path_space_loss_fixed(self):
+        """W1 v2 extractor preserves inter-run whitespace. The
+        signature pattern from the buggy PDF should be GONE in the v2
+        artifact's body text.
+        """
+        self.assertNotIn(
+            "Beforeanythingelse", self.body,
+            "Bug 3 (run-boundary space loss) recreated in W2 v2 path — "
+            "this means W2 is doing something downstream that drops "
+            "whitespace. Investigate the converter's _render_spans."
+        )
+
+    # Bug 4.
+    def test_v2_path_h001_suppresses_system_title(self):
+        """W1 v2 fired H-001 (intake metadata + author title page).
+        The system title page should be suppressed in the .tex.
+        """
+        h001 = [r for r in self.norm["applied_rules"] if r.get("rule") == "H-001"]
+        self.assertEqual(len(h001), 1, "H-001 missing from v2 applied_rules")
+        self.assertNotIn(
+            r"\begin{titlepage}", self.tex,
+            "Bug 4 (system title page) recreated in W2 v2 path — H-001 "
+            "fired but the suppression substitution didn't take effect."
+        )
+        # And the author cluster renders via title_page handler.
+        title_page_blocks = [
+            b for b in self.norm["content"]["blocks"]
+            if b.get("role") == "title_page"
+        ]
+        self.assertGreater(len(title_page_blocks), 0,
+                           "v2 artifact has no title_page blocks — C-003 "
+                           "should have classified the opening cluster")
+
+    # Bug 5.
+    def test_v2_path_part_dividers_force_page_break(self):
+        """C-002 classifies "Part One Understanding" etc. as
+        part_divider with force_page_break=true. The converter emits
+        \\clearpage before each \\part*. The Long Quiet has multiple
+        parts — every one should produce a \\clearpage \\part* pair.
+        """
+        part_blocks = [
+            b for b in self.norm["content"]["blocks"]
+            if b.get("role") == "part_divider"
+        ]
+        self.assertGreater(
+            len(part_blocks), 0,
+            "v2 artifact has no part_divider blocks — C-002 should have "
+            "classified Part One / Part Two etc."
+        )
+        # Each part_divider in the body should be preceded by \clearpage.
+        import re
+        clears_before_parts = re.findall(
+            r"\\clearpage\s*\n\\part\*\{[^{}]+\}", self.body
+        )
+        self.assertEqual(
+            len(clears_before_parts), len(part_blocks),
+            f"Bug 5 recreated: {len(part_blocks)} part_divider blocks but "
+            f"only {len(clears_before_parts)} \\clearpage+\\part* pairs in "
+            f"the body."
+        )
+
+    # Bonus end-to-end shape assertions.
+    def test_v2_path_all_blocks_have_role(self):
+        """I-2 — every block has a non-null role after the v2 reader
+        (terminal default applied upstream).
+        """
+        for b in self.norm["content"]["blocks"]:
+            self.assertTrue(b.get("role"), f"block {b.get('id')} lacks role")
+
+    def test_v2_path_chapter_count_matches(self):
+        """The Long Quiet has 14 chapters. Verify all 14 land as
+        chapter_heading role with non-null titles.
+        """
+        chapters = [
+            b for b in self.norm["content"]["blocks"]
+            if b.get("role") == "chapter_heading"
+        ]
+        self.assertEqual(len(chapters), 14,
+                         f"expected 14 chapters, got {len(chapters)}")
+        for ch in chapters:
+            self.assertTrue(ch.get("chapter_title"))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
