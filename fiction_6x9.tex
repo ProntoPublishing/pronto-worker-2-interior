@@ -172,17 +172,17 @@
 
 {{SYSTEM_TITLE_PAGE}}
 
-% Copyright page
-\thispagestyle{empty}
-\vspace*{\fill}
-\begin{flushleft}
-\small
-Copyright \textcopyright\ {{YEAR}} by {{AUTHOR_NAME}}\\[1em]
-All rights reserved. No part of this book may be reproduced in any form or by any electronic or mechanical means, including information storage and retrieval systems, without permission in writing from the publisher, except by a reviewer who may quote brief passages in a review.\\[1em]
-First Edition\\[1em]
-ISBN: {{ISBN}}
-\end{flushleft}
-\clearpage
+% ============================================================================
+% COPYRIGHT PAGE (Doc 23 R-2.3)
+% ============================================================================
+%
+% Verso of the title page. The placeholder on the next line is filled
+% by lib.title_page.render_copyright_page_latex from Book Metadata
+% fields (year / author / ISBN / edition / publisher). Top-aligned,
+% 8pt body. Trailing \clearpage so the next page (dedication / front
+% matter content / body) lands on a fresh page.
+
+{{COPYRIGHT_PAGE}}
 
 % Table of contents (optional)
 % \tableofcontents

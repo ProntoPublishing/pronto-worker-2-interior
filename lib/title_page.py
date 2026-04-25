@@ -1,5 +1,6 @@
 """
-Title-page rendering — Doc 23 R-2.1 (half-title) + R-2.2 (title page).
+Title-page rendering — Doc 23 R-2.1 (half-title) + R-2.2 (title page) +
+R-2.3 (copyright page).
 
 Per Doc 23 R-2.2:
 
@@ -8,6 +9,16 @@ Per Doc 23 R-2.2:
     falls back to Book Metadata fields from Airtable.
 
     If neither is present, W2 fails the Service.
+
+Per Doc 23 R-2.3 — copyright page:
+
+    The verso of the title page. Populated from Book Metadata fields:
+    - Copyright statement (© YYYY by AUTHOR. All rights reserved.)
+    - Standard rights-reserved language
+    - ISBN if present
+    - Edition statement
+    - Optional publisher imprint
+    Top-aligned, small type (8 pt), single column.
 
 The "extracted title, subtitle, and author fields" live in
 artifact.manuscript_meta — C-003 populates them from the title_page
@@ -187,6 +198,70 @@ def render_title_page_latex(fields: ResolvedTitleFields) -> str:
     out.extend([
         "\\end{center}",
         "\\vfill",
+        "\\clearpage",
+    ])
+    return "\n".join(out)
+
+
+def render_copyright_page_latex(
+    *,
+    year: str,
+    author: str,
+    isbn: Optional[str] = None,
+    edition: str = "First Edition",
+    publisher: Optional[str] = None,
+) -> str:
+    """R-2.3 — copyright page (verso of title page).
+
+    Top-aligned, 8pt body, left-flushed single column. Includes:
+      - Copyright statement: "© YYYY by AUTHOR. All rights reserved."
+      - Standard rights-reserved language
+      - Edition statement (default "First Edition")
+      - ISBN (if present)
+      - Publisher imprint (if present)
+
+    The trailing \\clearpage advances to the next page so the
+    subsequent dedication / front matter content lands on a recto
+    (or, when there's no dedication, the first body page lands recto
+    via the openright documentclass option).
+
+    Args
+        year: copyright year. Caller supplies — typically from
+            artifact-derived value or RenderParams.year (which is
+            pinned to "1970" in deterministic mode).
+        author: author name. LaTeX-escaped here.
+        isbn: optional. Empty / None → ISBN line omitted.
+        edition: default "First Edition". Override for revised editions.
+        publisher: optional imprint line at the bottom.
+    """
+    out = [
+        "\\thispagestyle{empty}",
+        # R-2.3 body size: 8pt on 10pt leading.
+        "\\fontsize{8pt}{10pt}\\selectfont",
+        # Disable first-line indent — copyright pages aren't paragraphed.
+        "\\setlength{\\parindent}{0pt}",
+        "\\noindent\\begin{flushleft}",
+        f"Copyright \\textcopyright\\ {_latex_escape(year)} by "
+        f"{_latex_escape(author)}. All rights reserved.\\\\[0.5em]",
+        "No part of this book may be reproduced in any form or by any "
+        "electronic or mechanical means, including information storage "
+        "and retrieval systems, without permission in writing from the "
+        "publisher, except by a reviewer who may quote brief passages "
+        "in a review.\\\\[0.5em]",
+        f"{_latex_escape(edition)}\\\\[0.5em]",
+    ]
+    if isbn and isbn.strip():
+        out.append(f"ISBN: {_latex_escape(isbn.strip())}\\\\[0.5em]")
+    if publisher and publisher.strip():
+        out.append(
+            f"\\vspace*{{1em}}\\textit{{{_latex_escape(publisher.strip())}}}"
+        )
+    out.extend([
+        "\\end{flushleft}",
+        # Restore body size for any subsequent content (the
+        # \frontmatter region's other content runs at the body size
+        # set by \AtBeginDocument{\normalsize}).
+        "\\normalsize",
         "\\clearpage",
     ])
     return "\n".join(out)

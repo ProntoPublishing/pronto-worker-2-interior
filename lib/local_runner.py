@@ -50,6 +50,7 @@ from .blocks_to_latex import BlocksToLatexConverter
 from .render_params import RenderParams
 from .title_page import (
     TitlePageMissingError,
+    render_copyright_page_latex,
     render_half_title_page_latex,
     render_title_page_latex,
     resolve_title_fields,
@@ -175,6 +176,16 @@ def render_local(
         title_fields.title, title_fields.subtitle, title_fields.author,
     )
 
+    # Doc 23 R-2.3 — copyright page (verso of title). Author falls back
+    # to the title-page-resolved author or, if that's None, to a literal
+    # "Author" placeholder. Year comes from RenderParams (deterministic
+    # mode pins it to "1970"; production mode uses current year).
+    copyright_page = render_copyright_page_latex(
+        year=params.year or "1970",
+        author=title_fields.author or params.author_name or "Author",
+        isbn=params.isbn or None,
+    )
+
     # Apply book-specific placeholders first, then RenderParams typography
     # placeholders. Both halves use count=1 to defend against any
     # accidental second occurrence in the template (the multi-line
@@ -185,6 +196,7 @@ def render_local(
         .replace("{{FRONT_MATTER_CONTENT}}", latex_front, 1)
         .replace("{{HALF_TITLE_PAGE}}", half_title_page, 1)
         .replace("{{SYSTEM_TITLE_PAGE}}", system_title_page, 1)
+        .replace("{{COPYRIGHT_PAGE}}", copyright_page, 1)
         .replace("{{BOOK_TITLE}}", params.book_title)
         .replace("{{AUTHOR_NAME}}", params.author_name)
         .replace("{{FONT_NAME}}", actual_font)

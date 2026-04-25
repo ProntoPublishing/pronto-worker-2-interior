@@ -907,6 +907,7 @@ def _full_filled_template(template_name: str, norm: dict, latex_body: str,
     is sparse.
     """
     from lib.title_page import (
+        render_copyright_page_latex,
         render_half_title_page_latex,
         render_title_page_latex,
         resolve_title_fields,
@@ -918,12 +919,16 @@ def _full_filled_template(template_name: str, norm: dict, latex_body: str,
     )
     half_title = render_half_title_page_latex(fields)
     system_title = render_title_page_latex(fields)
+    copyright_page = render_copyright_page_latex(
+        year="2026", author=fields.author or "Test Author",
+    )
     return (
         template
         .replace("{{CONTENT}}", latex_body, 1)
         .replace("{{FRONT_MATTER_CONTENT}}", latex_front, 1)
         .replace("{{HALF_TITLE_PAGE}}", half_title, 1)
         .replace("{{SYSTEM_TITLE_PAGE}}", system_title, 1)
+        .replace("{{COPYRIGHT_PAGE}}", copyright_page, 1)
         .replace("{{BOOK_TITLE}}", "The Long Quiet")
         .replace("{{AUTHOR_NAME}}", "Test Author")
         .replace("{{FONT_NAME}}", "EB Garamond")

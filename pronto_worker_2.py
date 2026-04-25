@@ -51,6 +51,7 @@ from lib.pdf_validator import PDFValidator
 from lib.airtable_client import AirtableClient
 from lib.title_page import (
     TitlePageMissingError,
+    render_copyright_page_latex,
     render_half_title_page_latex,
     render_title_page_latex,
     resolve_title_fields,
@@ -228,6 +229,18 @@ class InteriorProcessor:
                 f"subtitle={title_fields.subtitle!r} author={title_fields.author!r}"
             )
 
+            # Doc 23 R-2.3 — copyright page (verso of title). The
+            # author chain prefers the resolved title-page author (it
+            # already applied R-2.2's fallback chain); falls back to
+            # raw params for safety. Year comes from now_year so the
+            # production path always reflects the current calendar
+            # year, while local --local mode pins via RenderParams.
+            copyright_page = render_copyright_page_latex(
+                year=now_year,
+                author=title_fields.author or params.get("author_name") or "Author",
+                isbn=params.get("isbn"),
+            )
+
             # Replace the body placeholder with count=1 explicitly. latex_body
             # is a multi-line string containing the entire book; any second
             # occurrence of the {{CONTENT}} marker in the template — including
@@ -243,6 +256,7 @@ class InteriorProcessor:
                 .replace("{{FRONT_MATTER_CONTENT}}", latex_front, 1)
                 .replace("{{HALF_TITLE_PAGE}}", half_title_page, 1)
                 .replace("{{SYSTEM_TITLE_PAGE}}", system_title_page, 1)
+                .replace("{{COPYRIGHT_PAGE}}", copyright_page, 1)
                 .replace("{{BOOK_TITLE}}", params.get("book_title", ""))
                 .replace("{{AUTHOR_NAME}}", params.get("author_name", ""))
                 .replace("{{FONT_NAME}}", actual_font)

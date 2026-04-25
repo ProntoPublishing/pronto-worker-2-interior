@@ -122,6 +122,7 @@ class Test_TemplateFillSurface(unittest.TestCase):
             ("{{FRONT_MATTER_CONTENT}}", ""),
             ("{{HALF_TITLE_PAGE}}", ""),
             ("{{SYSTEM_TITLE_PAGE}}", ""),
+            ("{{COPYRIGHT_PAGE}}", ""),
             ("{{BOOK_TITLE}}", "Stub"),
             ("{{AUTHOR_NAME}}", "Stub"),
             ("{{FONT_NAME}}", "EB Garamond"),
@@ -935,6 +936,110 @@ class Test_R2_2_TitlePageFallbackChain(unittest.TestCase):
         self.assertTrue(out.rstrip().endswith(r"\clearpage"))
         # Make sure it's NOT \cleardoublepage at the end.
         self.assertFalse(out.rstrip().endswith(r"\cleardoublepage"))
+
+
+class Test_R2_3_CopyrightPage(unittest.TestCase):
+    """R-2.3 — copyright page on the verso of the title page.
+    Top-aligned, 8pt body, single column. Populated from Book Metadata
+    fields (year / author / ISBN / edition / publisher).
+    """
+
+    def setUp(self) -> None:
+        from lib.title_page import render_copyright_page_latex
+        self.render = render_copyright_page_latex
+
+    def test_R0203_emits_copyright_statement(self) -> None:
+        out = self.render(year="2026", author="Jane Doe")
+        self.assertIn(
+            r"Copyright \textcopyright\ 2026 by Jane Doe. "
+            r"All rights reserved.",
+            out,
+        )
+
+    def test_R0203_emits_rights_reserved_language(self) -> None:
+        out = self.render(year="2026", author="X")
+        self.assertIn("No part of this book may be reproduced", out)
+        self.assertIn("permission in writing from the publisher", out)
+        self.assertIn("reviewer who may quote brief passages", out)
+
+    def test_R0203_default_edition_is_first(self) -> None:
+        out = self.render(year="2026", author="X")
+        self.assertIn("First Edition", out)
+
+    def test_R0203_edition_can_be_overridden(self) -> None:
+        out = self.render(year="2026", author="X", edition="Second Edition, Revised")
+        self.assertIn("Second Edition, Revised", out)
+        self.assertNotIn("First Edition", out)
+
+    def test_R0203_isbn_included_when_present(self) -> None:
+        out = self.render(year="2026", author="X", isbn="978-0-00-000000-0")
+        self.assertIn("ISBN: 978-0-00-000000-0", out)
+
+    def test_R0203_isbn_omitted_when_absent(self) -> None:
+        out = self.render(year="2026", author="X", isbn=None)
+        self.assertNotIn("ISBN", out)
+
+    def test_R0203_isbn_omitted_when_empty_string(self) -> None:
+        out = self.render(year="2026", author="X", isbn="")
+        self.assertNotIn("ISBN", out)
+
+    def test_R0203_isbn_omitted_when_whitespace_only(self) -> None:
+        out = self.render(year="2026", author="X", isbn="   ")
+        self.assertNotIn("ISBN", out)
+
+    def test_R0203_publisher_included_when_present(self) -> None:
+        out = self.render(
+            year="2026", author="X", publisher="Pronto Publishing",
+        )
+        self.assertIn("Pronto Publishing", out)
+
+    def test_R0203_publisher_omitted_when_absent(self) -> None:
+        out = self.render(year="2026", author="X")
+        # No \textit publisher imprint when no publisher passed.
+        # (\textit might appear elsewhere — check that the publisher-
+        # specific construction is absent by checking for unique
+        # context.)
+        self.assertNotIn(r"\vspace*{1em}\textit", out)
+
+    def test_R0203_uses_8pt_body_size(self) -> None:
+        """Doc 23 R-2.3 specifies "small type (8 pt)"."""
+        out = self.render(year="2026", author="X")
+        self.assertIn(r"\fontsize{8pt}{10pt}\selectfont", out)
+
+    def test_R0203_thispagestyle_empty_suppresses_page_number(self) -> None:
+        """Per R-6.2 the copyright page page number is suppressed."""
+        out = self.render(year="2026", author="X")
+        self.assertIn(r"\thispagestyle{empty}", out)
+
+    def test_R0203_top_aligned_no_leading_vfill(self) -> None:
+        """R-2.3 says top-aligned. Verify there's no \\vspace*{\\fill}
+        at the top (which would push content to bottom)."""
+        out = self.render(year="2026", author="X")
+        # \vspace*{\fill} appearing only AFTER copyright content
+        # (e.g. inside an optional section) is OK; there must NOT be
+        # one before the Copyright statement.
+        copyright_idx = out.find("Copyright")
+        leading = out[:copyright_idx]
+        self.assertNotIn(r"\vspace*{\fill}", leading,
+                         "Copyright page must be top-aligned (no leading \\vfill)")
+
+    def test_R0203_terminal_clearpage_for_next_page(self) -> None:
+        """\\clearpage so the next page (dedication / front matter /
+        body) lands on a fresh sheet."""
+        out = self.render(year="2026", author="X")
+        self.assertTrue(out.rstrip().endswith(r"\clearpage"))
+
+    def test_R0203_escapes_latex_specials_in_author(self) -> None:
+        out = self.render(year="2026", author="O'Brien & Sons")
+        self.assertIn(r"\&", out)
+        # Unescaped & should NOT appear (single ampersand is LaTeX-illegal).
+        # All & should be \&.
+        self.assertNotIn(" & ", out.replace(r"\&", ""))
+
+    def test_R0203_escapes_latex_specials_in_year(self) -> None:
+        # Year with $ shouldn't break (paranoid).
+        out = self.render(year="20$26", author="X")
+        self.assertIn(r"\$", out)
 
 
 if __name__ == "__main__":
