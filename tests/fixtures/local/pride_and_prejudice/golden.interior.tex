@@ -181,6 +181,28 @@ ISBN:
 % \tableofcontents
 % \clearpage
 
+% ============================================================================
+% FRONT-MATTER CONTENT (Doc 23 R-2.4 / R-2.6)
+% ============================================================================
+%
+% Author-supplied front matter (dedication, foreword, preface, prologue,
+% generic). The converter's convert_split() pre-pass partitions
+% role="front_matter" blocks here. Page numbering inherits the
+% lowercase-Roman style from \frontmatter (Doc 23 R-6.1). Subsequent
+% commits add subtype-ordered rendering and recto starts.
+
+\chapter*{
+
+PRIDE.
+and
+PREJUDICE}
+\addcontentsline{toc}{chapter}{
+
+PRIDE.
+and
+PREJUDICE}
+
+
 % Main matter
 \mainmatter
 \pagestyle{fancy}
@@ -200,17 +222,6 @@ ISBN:
 \end{center}
 \vfill
 \clearpage
-
-\chapter*{
-
-PRIDE.
-and
-PREJUDICE}
-\addcontentsline{toc}{chapter}{
-
-PRIDE.
-and
-PREJUDICE}
 
 \textit{by}
 \textit{Jane Austen,}

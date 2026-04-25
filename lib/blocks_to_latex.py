@@ -124,10 +124,40 @@ class BlocksToLatexConverter:
         params: Dict[str, Any],
         degraded_mode: bool = False,
     ) -> str:
-        """Convert v2.0 blocks to LaTeX body content.
+        """Convert v2.0 blocks to LaTeX. Legacy single-string return.
 
-        Returns a string suitable for substituting into the {{CONTENT}}
-        placeholder in fiction_6x9.tex / nonfiction_6x9.tex.
+        Concatenates front-matter and body LaTeX into one string, in
+        document order. Retained for back-compat; new callers should
+        prefer `convert_split()` so the front matter and body land in
+        the right LaTeX page-numbering regions (per Doc 23 R-2.x and
+        R-6.1).
+        """
+        front, body = self.convert_split(blocks, params, degraded_mode)
+        if front and body:
+            return front.rstrip() + "\n" + body
+        return front or body
+
+    def convert_split(
+        self,
+        blocks: List[Dict[str, Any]],
+        params: Dict[str, Any],
+        degraded_mode: bool = False,
+    ) -> tuple[str, str]:
+        """Convert v2.0 blocks to LaTeX, returning (front_matter, body).
+
+        front_matter LaTeX is suitable for the `{{FRONT_MATTER_CONTENT}}`
+        template placeholder (inside `\\frontmatter`). Body LaTeX is
+        suitable for `{{CONTENT}}` (inside `\\mainmatter`). This
+        separation enforces Doc 23 R-2.x layout and R-6.1 page-
+        numbering (lowercase Roman in front, Arabic from body).
+
+        For B.1 substrate scope, the partition is simple: blocks with
+        role == "front_matter" route to front matter; everything else
+        (including title_page, which is still tightly coupled with the
+        SYSTEM_TITLE_PAGE / H-001 placeholder) routes to body.
+        Subsequent Bucket B commits widen the partition and add
+        Doc 23 R-2.x semantics (subtype-ordered rendering, recto
+        starts, half-title page, system copyright page).
         """
         logger.info(
             f"Converting {len(blocks)} v2 blocks to LaTeX "
@@ -135,12 +165,38 @@ class BlocksToLatexConverter:
         )
 
         # Doc 23 R-3.4 — single-rendering invariant. Collapse adjacent
-        # duplicate chapter_heading blocks BEFORE iteration. Per W1
+        # duplicate chapter_heading blocks BEFORE partition. Per W1
         # contract I-4 this should never occur on a clean artifact;
         # the collapse is a defensive measure against producer drift,
         # and each collapse emits a warning so the operator can chase
         # the upstream cause.
         blocks = _collapse_adjacent_duplicate_chapter_headings(blocks)
+
+        # Doc 23 §Front Matter — partition by role into the LaTeX
+        # \frontmatter region vs. the \mainmatter region.
+        front_blocks, body_blocks = _partition_front_matter(blocks)
+
+        ctx_base = {"degraded": degraded_mode, "params": params}
+        front_latex = self._render_block_sequence(front_blocks, ctx_base)
+        body_latex = self._render_block_sequence(body_blocks, ctx_base)
+        return front_latex, body_latex
+
+    # -- Block-sequence rendering ------------------------------------------
+
+    def _render_block_sequence(
+        self,
+        blocks: List[Dict[str, Any]],
+        ctx_base: Dict[str, Any],
+    ) -> str:
+        """Render a sequence of blocks to LaTeX. Shared by the
+        front-matter and body halves of convert_split().
+
+        State (list grouping, R-3.5/R-4.4 next-paragraph-no-indent
+        flag) is local to one call — the front-matter and body
+        sequences are independent.
+        """
+        if not blocks:
+            return ""
 
         out: List[str] = []
         list_state = _ListState()
@@ -191,8 +247,7 @@ class BlocksToLatexConverter:
                 )
                 handler_name = "_render_body_paragraph"
             handler = getattr(self, handler_name)
-            ctx = {"degraded": degraded_mode, "params": params}
-            latex = handler(block, ctx)
+            latex = handler(block, ctx_base)
 
             # R-3.5 / R-4.4: prepend \noindent to the first body_paragraph
             # after a chapter_heading or scene_break.
@@ -214,7 +269,7 @@ class BlocksToLatexConverter:
                 out.append(latex)
                 out.append("")
 
-        # Close any list still open at end-of-document.
+        # Close any list still open at end-of-sequence.
         if list_state.open_env:
             out.append(f"\\end{{{list_state.open_env}}}")
             out.append("")
@@ -522,6 +577,41 @@ class BlocksToLatexConverter:
         # toc_marker (v1 upgrade) — let the template's TOC handle this.
         # Emit a comment for traceability.
         return f"% structural block {block.get('id')} (CIR type={cir_type!r})"
+
+
+# ---------------------------------------------------------------------------
+# Doc 23 §Front Matter — block partition
+# ---------------------------------------------------------------------------
+
+# Roles that route to LaTeX \frontmatter rather than \mainmatter.
+# Doc 23 R-2.4 / R-2.6 — dedication, foreword, preface, prologue,
+# generic front matter all carry role == "front_matter" with a
+# subtype.
+#
+# title_page is intentionally NOT in this set for B.1: title pages
+# remain tightly coupled with the SYSTEM_TITLE_PAGE / H-001 placeholder
+# in the existing template wiring. Subsequent Bucket B commits
+# (R-2.1 half-title, R-2.2 title-page fallback) redesign that path
+# and may move title_page into the front-matter partition.
+_FRONT_MATTER_ROLES = frozenset({"front_matter"})
+
+
+def _partition_front_matter(
+    blocks: List[Dict[str, Any]],
+) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """Split blocks into (front_matter, body) by role.
+
+    Preserves document order within each partition. Pure function;
+    does not mutate input.
+    """
+    front: List[Dict[str, Any]] = []
+    body: List[Dict[str, Any]] = []
+    for block in blocks:
+        if block.get("role") in _FRONT_MATTER_ROLES:
+            front.append(block)
+        else:
+            body.append(block)
+    return front, body
 
 
 # ---------------------------------------------------------------------------

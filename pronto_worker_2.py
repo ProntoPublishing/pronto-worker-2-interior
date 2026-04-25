@@ -198,15 +198,19 @@ class InteriorProcessor:
             if decision.action == "FAIL":
                 raise ValueError(f"Cannot process: {decision.reason}")
             
-            # Step 7: Convert blocks to LaTeX
-            latex_body = self.latex_converter.convert(
+            # Step 7: Convert blocks to LaTeX. convert_split returns
+            # (front_matter, body) so the front-matter content lands in
+            # \frontmatter (lowercase Roman page numbers per Doc 23
+            # R-6.1) and the body lands in \mainmatter (Arabic).
+            latex_front, latex_body = self.latex_converter.convert_split(
                 blocks=artifact['content']['blocks'],
                 params=params,
                 degraded_mode=(decision.action == "DEGRADE")
             )
-            
+
             # Remove placeholder line if present
             latex_body = latex_body.replace("% PREAMBLE_PLACEHOLDER", "").lstrip()
+            latex_front = latex_front.replace("% PREAMBLE_PLACEHOLDER", "").lstrip()
             
             # Pick template based on genre
             template_name = "fiction_6x9.tex" if params.get("genre", "").lower() == "fiction" else "nonfiction_6x9.tex"
@@ -246,6 +250,7 @@ class InteriorProcessor:
             latex_content = (
                 template
                 .replace("{{CONTENT}}", latex_body, 1)
+                .replace("{{FRONT_MATTER_CONTENT}}", latex_front, 1)
                 .replace("{{SYSTEM_TITLE_PAGE}}", system_title_page, 1)
                 .replace("{{BOOK_TITLE}}", params.get("book_title", ""))
                 .replace("{{AUTHOR_NAME}}", params.get("author_name", ""))

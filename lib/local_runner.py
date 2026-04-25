@@ -152,14 +152,18 @@ def render_local(
             year=str(datetime.now(timezone.utc).year),
         )
 
-    # Step 1: blocks → LaTeX body.
+    # Step 1: blocks → LaTeX. convert_split returns (front_matter, body)
+    # so the front-matter content lands in \frontmatter (lowercase
+    # Roman page numbers per Doc 23 R-6.1) and the body lands in
+    # \mainmatter (Arabic).
     converter = BlocksToLatexConverter()
-    latex_body = converter.convert(
+    latex_front, latex_body = converter.convert_split(
         blocks=blocks,
         params=params.to_dict(),
         degraded_mode=False,
     )
     latex_body = latex_body.replace("% PREAMBLE_PLACEHOLDER", "").lstrip()
+    latex_front = latex_front.replace("% PREAMBLE_PLACEHOLDER", "").lstrip()
 
     # Step 2: Pick template + fill placeholders.
     template_name = (
@@ -185,11 +189,13 @@ def render_local(
     system_title_page = _system_title_page_latex(artifact)
 
     # Apply book-specific placeholders first, then RenderParams typography
-    # placeholders (the latter is a no-op against today's templates that
-    # don't yet reference {{PARAM_*}}; forward-compatible).
+    # placeholders. Both halves use count=1 to defend against any
+    # accidental second occurrence in the template (the multi-line
+    # body would otherwise break out of LaTeX comments).
     latex = (
         template
         .replace("{{CONTENT}}", latex_body, 1)
+        .replace("{{FRONT_MATTER_CONTENT}}", latex_front, 1)
         .replace("{{SYSTEM_TITLE_PAGE}}", system_title_page, 1)
         .replace("{{BOOK_TITLE}}", params.book_title)
         .replace("{{AUTHOR_NAME}}", params.author_name)

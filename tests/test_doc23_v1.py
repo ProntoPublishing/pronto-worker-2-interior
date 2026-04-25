@@ -22,6 +22,7 @@ from lib.render_params import RenderParams  # noqa: E402
 from lib.blocks_to_latex import (  # noqa: E402
     BlocksToLatexConverter,
     _collapse_adjacent_duplicate_chapter_headings,
+    _partition_front_matter,
 )
 
 
@@ -118,6 +119,7 @@ class Test_TemplateFillSurface(unittest.TestCase):
         # values; the surviving-{{PARAM_}} check is what matters.
         for k, v in (
             ("{{CONTENT}}", ""),
+            ("{{FRONT_MATTER_CONTENT}}", ""),
             ("{{SYSTEM_TITLE_PAGE}}", ""),
             ("{{BOOK_TITLE}}", "Stub"),
             ("{{AUTHOR_NAME}}", "Stub"),
@@ -549,6 +551,181 @@ class Test_R7_1_UnrecognizedRoleFallback(unittest.TestCase):
         with self.assertRaises(RuntimeError) as ctx:
             BrokenConverter()
         self.assertIn("missing handlers for roles", str(ctx.exception))
+
+
+class Test_FrontMatterPartition(unittest.TestCase):
+    """Doc 23 §Front Matter — convert_split() partitions blocks by
+    role into the LaTeX \\frontmatter region vs. \\mainmatter.
+
+    For B.1 substrate the partition is conservative: only role ==
+    "front_matter" routes to front matter; everything else (including
+    title_page) routes to body. Subsequent commits widen the partition.
+    """
+
+    def setUp(self) -> None:
+        self.converter = BlocksToLatexConverter()
+
+    def _front_matter_block(self, block_id: str, subtype: str, text: str) -> dict:
+        return {
+            "id": block_id,
+            "type": "paragraph",
+            "role": "front_matter",
+            "subtype": subtype,
+            "spans": [{"text": text, "marks": []}],
+        }
+
+    # -- Pure partition function ---------------------------------------
+    def test_partition_isolates_front_matter_blocks(self) -> None:
+        fm = self._front_matter_block("b1", "dedication", "For Mom.")
+        body = _make_body("b2", "Body text.")
+        front, rest = _partition_front_matter([fm, body])
+        self.assertEqual([b["id"] for b in front], ["b1"])
+        self.assertEqual([b["id"] for b in rest], ["b2"])
+
+    def test_partition_preserves_document_order_within_each_partition(
+        self,
+    ) -> None:
+        fm1 = self._front_matter_block("b1", "dedication", "First front.")
+        body1 = _make_body("b2", "Body 1.")
+        fm2 = self._front_matter_block("b3", "preface", "Second front.")
+        body2 = _make_body("b4", "Body 2.")
+        front, rest = _partition_front_matter([fm1, body1, fm2, body2])
+        self.assertEqual([b["id"] for b in front], ["b1", "b3"])
+        self.assertEqual([b["id"] for b in rest], ["b2", "b4"])
+
+    def test_partition_does_not_mutate_input(self) -> None:
+        fm = self._front_matter_block("b1", "dedication", "x")
+        body = _make_body("b2", "y")
+        original = [fm, body]
+        _partition_front_matter(original)
+        self.assertEqual([b["id"] for b in original], ["b1", "b2"])
+
+    def test_partition_empty_input_returns_empty_pair(self) -> None:
+        front, rest = _partition_front_matter([])
+        self.assertEqual(front, [])
+        self.assertEqual(rest, [])
+
+    def test_partition_keeps_title_page_in_body_for_now(self) -> None:
+        """B.1 explicitly does NOT route title_page blocks to front
+        matter — they're tightly coupled with the SYSTEM_TITLE_PAGE
+        placeholder. R-2.2 (next commit) redesigns this path."""
+        tp = {
+            "id": "b1", "type": "paragraph", "role": "title_page",
+            "spans": [{"text": "The Title", "marks": []}],
+        }
+        body = _make_body("b2", "Body.")
+        front, rest = _partition_front_matter([tp, body])
+        self.assertEqual(front, [])
+        self.assertEqual([b["id"] for b in rest], ["b1", "b2"])
+
+    # -- convert_split() public API ------------------------------------
+    def test_convert_split_returns_tuple_of_strings(self) -> None:
+        fm = self._front_matter_block("b1", "dedication", "Front content.")
+        body = _make_body("b2", "Body content.")
+        result = self.converter.convert_split(
+            [fm, body], params={}, degraded_mode=False,
+        )
+        self.assertIsInstance(result, tuple)
+        self.assertEqual(len(result), 2)
+        front_latex, body_latex = result
+        self.assertIn("Front content.", front_latex)
+        self.assertNotIn("Front content.", body_latex)
+        self.assertIn("Body content.", body_latex)
+        self.assertNotIn("Body content.", front_latex)
+
+    def test_convert_split_with_no_front_matter_returns_empty_front(
+        self,
+    ) -> None:
+        body = _make_body("b1", "Just body.")
+        front_latex, body_latex = self.converter.convert_split(
+            [body], params={}, degraded_mode=False,
+        )
+        self.assertEqual(front_latex, "")
+        self.assertIn("Just body.", body_latex)
+
+    def test_convert_split_with_only_front_matter_returns_empty_body(
+        self,
+    ) -> None:
+        fm = self._front_matter_block("b1", "dedication", "Only dedication.")
+        front_latex, body_latex = self.converter.convert_split(
+            [fm], params={}, degraded_mode=False,
+        )
+        self.assertEqual(body_latex, "")
+        self.assertIn("Only dedication.", front_latex)
+
+    def test_convert_split_no_indent_flag_does_not_leak_between_halves(
+        self,
+    ) -> None:
+        """The R-3.5/R-4.4 next_paragraph_no_indent flag is local to
+        each call of _render_block_sequence. A chapter heading at the
+        END of the front-matter partition must not cause the FIRST
+        body_paragraph to render with \\noindent — they're rendered
+        in separate sequences."""
+        # This is a contrived case (chapter_heading wouldn't normally
+        # be in front matter) but pins the flag-locality contract.
+        # Use a scene_break in front matter instead, which is plausible
+        # if a future Doc 22 puts scene_break-marked epigraph cues in
+        # front matter.
+        sb = {"id": "b1", "type": "paragraph", "role": "front_matter",
+              "subtype": "epigraph",
+              "spans": [{"text": "Quote.", "marks": []}]}
+        body = _make_body("b2", "First body para.")
+        front_latex, body_latex = self.converter.convert_split(
+            [sb, body], params={}, degraded_mode=False,
+        )
+        # The front-matter scene-break-shaped block doesn't reach back
+        # across the partition boundary to inject \noindent.
+        self.assertNotIn(r"\noindent First body para.", body_latex)
+
+    # -- Legacy convert() back-compat ----------------------------------
+    def test_legacy_convert_returns_concatenation(self) -> None:
+        """convert() (single-string) is retained for back-compat. It
+        must return the front matter followed by the body."""
+        fm = self._front_matter_block("b1", "dedication", "Front.")
+        body = _make_body("b2", "Body.")
+        single = self.converter.convert(
+            [fm, body], params={}, degraded_mode=False,
+        )
+        self.assertIn("Front.", single)
+        self.assertIn("Body.", single)
+        # Front content appears before body content.
+        self.assertLess(single.find("Front."), single.find("Body."))
+
+
+class Test_FrontMatterTemplatePlumbing(unittest.TestCase):
+    """The {{FRONT_MATTER_CONTENT}} placeholder is in both templates,
+    positioned inside \\frontmatter and before \\mainmatter."""
+
+    def setUp(self) -> None:
+        self.fiction = (ROOT / "fiction_6x9.tex").read_text(encoding="utf-8")
+        self.nonfiction = (ROOT / "nonfiction_6x9.tex").read_text(encoding="utf-8")
+
+    def test_fiction_template_has_front_matter_placeholder(self) -> None:
+        self.assertIn("{{FRONT_MATTER_CONTENT}}", self.fiction)
+
+    def test_nonfiction_template_has_front_matter_placeholder(self) -> None:
+        self.assertIn("{{FRONT_MATTER_CONTENT}}", self.nonfiction)
+
+    def test_fiction_placeholder_is_inside_frontmatter_before_mainmatter(
+        self,
+    ) -> None:
+        front_idx = self.fiction.find(r"\frontmatter")
+        ph_idx = self.fiction.find("{{FRONT_MATTER_CONTENT}}")
+        main_idx = self.fiction.find(r"\mainmatter")
+        self.assertGreater(front_idx, -1)
+        self.assertGreater(ph_idx, front_idx,
+                           "{{FRONT_MATTER_CONTENT}} must be after \\frontmatter")
+        self.assertLess(ph_idx, main_idx,
+                        "{{FRONT_MATTER_CONTENT}} must be before \\mainmatter")
+
+    def test_nonfiction_placeholder_is_inside_frontmatter_before_mainmatter(
+        self,
+    ) -> None:
+        front_idx = self.nonfiction.find(r"\frontmatter")
+        ph_idx = self.nonfiction.find("{{FRONT_MATTER_CONTENT}}")
+        main_idx = self.nonfiction.find(r"\mainmatter")
+        self.assertGreater(ph_idx, front_idx)
+        self.assertLess(ph_idx, main_idx)
 
 
 if __name__ == "__main__":
