@@ -63,37 +63,54 @@
 \setlength{\parindent}{0.25in}
 \setlength{\parskip}{0pt}
 
-% Widow and orphan control
+% ---- H&J configuration (Interior Standard v1 draft defaults) ----
+% Values live in this one block so the Standard can re-bind them.
+
+% Widow and orphan control: hard forbid.
 \widowpenalty=10000
 \clubpenalty=10000
+% A page break right after a hyphenated line reads badly.
+\brokenpenalty=5000
 
-% Hyphenation
+% Hyphenation: discourage but allow; forbid ladders.
 \hyphenpenalty=1000
 \exhyphenpenalty=1000
+\doublehyphendemerits=10000
+\finalhyphendemerits=5000
+
+% Justification escape valve (see fiction template note).
+\emergencystretch=1.5em
+
+% Vertical policy: ragged bottom (see fiction template note).
+\raggedbottom
 
 % ============================================================================
 % HEADERS AND FOOTERS
 % ============================================================================
 
-\pagestyle{fancy}
-\fancyhf{}  % Clear all headers and footers
+% Body pagestyle — self-contained named style; see fiction template
+% for the fancyhdr plain-redefinition leak this design defends against
+% (the root cause of headerless production interiors).
+%
+% Running headers (Interior Standard v1 draft convention):
+% verso = book title, recto = current chapter title.
+\fancypagestyle{prontobody}{%
+  \fancyhf{}%
+  \fancyhead[LE]{\small\itshape {{BOOK_TITLE}}}%
+  \fancyhead[RO]{\small\itshape\rightmark}%
+  \fancyfoot[LE,RO]{\thepage}%
+  \renewcommand{\headrulewidth}{0pt}%
+}
 
-% Header: Chapter title (left) and Section title (right)
-\fancyhead[LE]{\small\itshape\leftmark}
-\fancyhead[RO]{\small\itshape\rightmark}
-
-% Footer: Page number (outside)
-\fancyfoot[LE,RO]{\thepage}
-
-% Plain style for chapter pages
+% Plain style for chapter openers and front matter (folio only)
 \fancypagestyle{plain}{
     \fancyhf{}
     \fancyfoot[LE,RO]{\thepage}
     \renewcommand{\headrulewidth}{0pt}
 }
 
-% Remove header rule
-\renewcommand{\headrulewidth}{0pt}
+\renewcommand{\chaptermark}[1]{\markright{#1}}
+\pagestyle{prontobody}
 
 % ============================================================================
 % CHAPTER FORMATTING
@@ -149,6 +166,16 @@
 \frontmatter
 \pagestyle{plain}
 
+% Half title (bare book title, recto, no folio)
+\thispagestyle{empty}
+\vspace*{0.28\textheight}
+\begin{center}
+{\Large {{BOOK_TITLE}}}
+\end{center}
+\clearpage
+% Half-title verso intentionally blank
+\thispagestyle{empty}\null\clearpage
+
 % Title page is H-001-conditional. pronto_worker_2.py fills the
 % placeholder on the next line: when H-001 fired (author supplied a
 % title page; system one suppressed) the placeholder becomes a
@@ -168,8 +195,7 @@
 \small
 Copyright \textcopyright\ {{YEAR}} by {{AUTHOR_NAME}}\\[1em]
 All rights reserved. No part of this book may be reproduced in any form or by any electronic or mechanical means, including information storage and retrieval systems, without permission in writing from the publisher, except by a reviewer who may quote brief passages in a review.\\[1em]
-First Edition\\[1em]
-ISBN: {{ISBN}}
+First Edition{{ISBN_LINE}}
 \end{flushleft}
 \clearpage
 
@@ -179,7 +205,7 @@ ISBN: {{ISBN}}
 
 % Main matter
 \mainmatter
-\pagestyle{fancy}
+\pagestyle{prontobody}
 
 % ============================================================================
 % CONTENT PLACEHOLDER

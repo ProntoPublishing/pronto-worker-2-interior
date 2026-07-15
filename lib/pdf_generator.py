@@ -63,20 +63,31 @@ class PDFGenerator:
         
         # Output PDF path
         pdf_file = output_dir / f"{run_id}.pdf"
-        
+
+        # PDF existence is the success criterion below, so a stale PDF
+        # from a previous run in the same output_dir would mask a failed
+        # compile as success. Delete the target first.
+        if pdf_file.exists():
+            pdf_file.unlink()
+
         # Run XeLaTeX directly (Pandoc not needed for .tex → .pdf)
         # We need to run XeLaTeX twice for proper page numbers and TOC
-        
+
         for run_num in [1, 2]:
             logger.info(f"Running XeLaTeX (pass {run_num}/2)")
             
+            # Paths are resolved to absolute POSIX form: a relative
+            # Windows path is wrong once cwd=output_dir, and TeX parses
+            # backslash path separators as control sequences (".\v12"
+            # → undefined \v). This silently broke every local pass-1
+            # until the stale-PDF success criterion above was fixed.
             result = subprocess.run(
                 [
                     self.xelatex_cmd,
                     "-interaction=nonstopmode",  # Don't stop on errors
-                    "-output-directory", str(output_dir),
+                    "-output-directory", Path(output_dir).resolve().as_posix(),
                     "-jobname", run_id,  # Output filename without extension
-                    str(latex_file)
+                    Path(latex_file).resolve().as_posix(),
                 ],
                 capture_output=True,
                 text=True,

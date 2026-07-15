@@ -629,8 +629,11 @@ class Test_ConverterMultiLineChapterTitle(unittest.TestCase):
         self.assertIn("I hope Mr. Bingley will like it.", out)
         # No raw newlines inside any sectioning argument.
         self.assertNotIn("\\chapter*{I hope", out)
-        # Heading appears exactly once.
-        self.assertEqual(out.count("CHAPTER II."), 2)  # heading + TOC line
+        # Heading appears exactly once in the BODY; the other two
+        # occurrences are plumbing (TOC contentsline + running-header
+        # \markright, presentation layer).
+        self.assertEqual(out.count("CHAPTER II."), 3)
+        self.assertIn("\\markright{CHAPTER II.}", out)
 
     def test_toc_line_uses_chapter_line_only(self):
         out = self._out("“On the way.” \n\nCHAPTER XL.")

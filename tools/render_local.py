@@ -100,6 +100,10 @@ def main() -> int:
         .replace("{{FONT_NAME}}", "EB Garamond")
         .replace("{{YEAR}}", args.year)
         .replace("{{ISBN}}", args.isbn)
+        .replace(
+            "{{ISBN_LINE}}",
+            f"\\\\[1em]\nISBN: {args.isbn}" if args.isbn else "",
+        )
     )
 
     args.out_dir.mkdir(parents=True, exist_ok=True)

@@ -370,7 +370,14 @@ class BlocksToLatexConverter:
         title = self._escape(block.get("part_title") or "")
         force_break = block.get("force_page_break", True)
         prefix = "\\clearpage\n" if force_break else ""
-        return f"{prefix}\\part*{{{title}}}\n\\addcontentsline{{toc}}{{part}}{{{title}}}"
+        # Clear the running-header chapter mark: pages between a part
+        # divider and its first chapter must not show the previous
+        # chapter's title.
+        return (
+            f"{prefix}\\part*{{{title}}}\n"
+            f"\\addcontentsline{{toc}}{{part}}{{{title}}}\n"
+            f"\\markright{{}}"
+        )
 
     # Matches the line inside a multi-line chapter_title that carries the
     # chapter designation. Deliberately a bare prefix (no \b): corpus
@@ -512,7 +519,23 @@ class BlocksToLatexConverter:
                 f"\\chapter*{{{title}}}\n"
                 f"\\addcontentsline{{toc}}{{chapter}}{{{title}}}"
             )
-        return heading + extra_latex
+        # Running-header mark (recto = chapter title). Emitted explicitly
+        # for BOTH paths: \chapter* never sets a mark, and for numbered
+        # chapters an explicit \markright with the truncated title wins
+        # over the \chaptermark default — headers get a bounded string
+        # even when the source title is a DQ-length sentence.
+        mark = self._escape(self._truncate_for_header(head))
+        return heading + f"\n\\markright{{{mark}}}" + extra_latex
+
+    _HEADER_MARK_MAX = 58
+
+    @classmethod
+    def _truncate_for_header(cls, text: str) -> str:
+        t = " ".join(text.split())
+        if len(t) <= cls._HEADER_MARK_MAX:
+            return t
+        cut = t[:cls._HEADER_MARK_MAX].rsplit(" ", 1)[0].rstrip(",;:")
+        return cut + "…"
 
     @staticmethod
     def _chapter_number_as_int(number: Any) -> Optional[int]:
@@ -557,7 +580,24 @@ class BlocksToLatexConverter:
             "\\end{center}"
         )
 
+    # Ornament-only paragraphs are scene breaks in the wild: authors
+    # (and Gutenberg conversions) type "* * *", "***", "~", "• • •" or
+    # a short dash run instead of a styled break. W1 carries them
+    # faithfully as body_paragraph; the presentation layer normalizes
+    # them to the template's \scenebreak asterism. (Interior Standard
+    # v1 draft; when W1 grows a scene_break classifier this detector
+    # becomes redundant but harmless.)
+    _ASTERISM_RE = re.compile(r"^[\s*·•~–—#_-]{1,16}$")
+
     def _render_body_paragraph(self, block: Dict[str, Any], ctx: Dict[str, Any]) -> str:
+        raw = "".join(
+            s.get("text", "") for s in (block.get("spans") or [])
+        )
+        stripped = raw.strip()
+        if stripped and self._ASTERISM_RE.match(stripped) and any(
+            ch in "*·•~–—#_-" for ch in stripped
+        ):
+            return "\\scenebreak"
         return self._render_spans(block)
 
     def _render_scene_break(self, block: Dict[str, Any], ctx: Dict[str, Any]) -> str:

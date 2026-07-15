@@ -256,6 +256,13 @@ class InteriorProcessor:
                 .replace("{{FONT_NAME}}", actual_font)
                 .replace("{{YEAR}}", now_year)
                 .replace("{{ISBN}}", params.get("isbn", ""))
+                # ISBN line on the copyright page: rendered only when an
+                # ISBN exists — no dangling "ISBN:" label otherwise.
+                .replace(
+                    "{{ISBN_LINE}}",
+                    f"\\\\[1em]\nISBN: {params.get('isbn')}"
+                    if params.get("isbn") else "",
+                )
             )
             
             # Save complete LaTeX document to work directory
