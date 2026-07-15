@@ -21,18 +21,18 @@ class TestLabelShapedTitles(unittest.TestCase):
     def test_letter_roman_int_number(self):
         out = render({"id": "b1", "role": "chapter_heading",
                       "chapter_number": 4, "chapter_title": "Letter IV"})
-        self.assertIn("\\chapter*{Letter IV}", out)
+        self.assertIn("\\chapter*{\\prontolabel{Letter IV}}", out)
         self.assertNotIn("\\setcounter", out)
 
     def test_stave_word_ordinal(self):
         out = render({"id": "b1", "role": "chapter_heading",
                       "chapter_number": 1, "chapter_title": "Stave ONE"})
-        self.assertIn("\\chapter*{Stave ONE}", out)
+        self.assertIn("\\chapter*{\\prontolabel{Stave ONE}}", out)
 
     def test_chapter_roman_from_fused_source(self):
         out = render({"id": "b1", "role": "chapter_heading",
                       "chapter_number": 27, "chapter_title": "Chapter XXVII"})
-        self.assertIn("\\chapter*{Chapter XXVII}", out)
+        self.assertIn("\\chapter*{\\prontolabel{Chapter XXVII}}", out)
 
     def test_mismatched_ordinal_is_not_label(self):
         # Title says IV but the artifact number is 5 — not label-shaped;
@@ -55,13 +55,13 @@ class TestLabelShapedTitles(unittest.TestCase):
         # "Chapter IV" — the original equality check still fires.
         out = render({"id": "b1", "role": "chapter_heading",
                       "chapter_number": "IV", "chapter_title": "Chapter IV"})
-        self.assertIn("\\chapter*{Chapter IV}", out)
+        self.assertIn("\\chapter*{\\prontolabel{Chapter IV}}", out)
 
     def test_caption_lines_still_render_beneath(self):
         out = render({"id": "b1", "role": "chapter_heading",
                       "chapter_number": 2,
                       "chapter_title": "Chapter II\nThe efforts of his aunt"})
-        self.assertIn("\\chapter*{Chapter II}", out)
+        self.assertIn("\\chapter*{\\prontolabel{Chapter II}}", out)
         self.assertIn("The efforts of his aunt", out)
         self.assertIn("\\itshape", out)
 

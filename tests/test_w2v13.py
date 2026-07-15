@@ -583,7 +583,9 @@ class Test_ConverterChapterOrdinal(unittest.TestCase):
         the source's numbering style (roman stays roman).
         """
         out = self.c.convert([self._block("IV", "Chapter IV")], params={})
-        self.assertIn("\\chapter*{Chapter IV}", out)
+        # Interior Standard v1 s4: label-shaped titles wear \prontolabel
+        # (spaced small caps); TOC entry stays plain.
+        self.assertIn("\\chapter*{\\prontolabel{Chapter IV}}", out)
         self.assertNotIn("\\setcounter", out)
 
     def test_unrepresentable_number_falls_back_to_star(self):
@@ -723,7 +725,9 @@ class Test_ConverterFrontBackMatter(unittest.TestCase):
         }
         out = self.c.convert([block], params={})
         self.assertIn("\\chapter*{A Note Before You Begin}", out)
-        self.assertIn("\\addcontentsline{toc}{chapter}{A Note Before You Begin}", out)
+        # Interior Standard v1 s3.5: front matter is NOT listed in the
+        # TOC (back matter keeps its entries — see the next test).
+        self.assertNotIn("\\addcontentsline", out)
 
     def test_back_matter_renders_chapter_star_with_toc(self):
         block = {

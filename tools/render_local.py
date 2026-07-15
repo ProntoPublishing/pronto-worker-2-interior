@@ -87,8 +87,19 @@ def main() -> int:
             "    {\\Huge\\textbf{{{BOOK_TITLE}}}}\\\\[1em]\n"
             "    {\\Large {{AUTHOR_NAME}}}\n"
             "    \\vfill\n"
+            "    {\\small\\textls[160]{\\scshape PRONTO PUBLISHING}}\\\\[0.4in]\n"
             "\\end{titlepage}"
         )
+    )
+
+    # Interior Standard v1 §3.5 [BOUND]: TOC included when >= 2 entries.
+    toc_entries = sum(
+        1 for b in artifact["content"]["blocks"]
+        if b.get("role") in ("chapter_heading", "part_divider", "back_matter")
+    )
+    toc_block = (
+        "\\tableofcontents\n\\clearpage" if toc_entries >= 2
+        else f"% TOC omitted: {toc_entries} entry(ies) < 2 (Standard s3.5)"
     )
 
     latex_content = (
@@ -104,6 +115,7 @@ def main() -> int:
             "{{ISBN_LINE}}",
             f"\\\\[1em]\nISBN: {args.isbn}" if args.isbn else "",
         )
+        .replace("{{TOC_BLOCK}}", toc_block, 1)
     )
 
     args.out_dir.mkdir(parents=True, exist_ok=True)

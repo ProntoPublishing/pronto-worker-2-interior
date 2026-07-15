@@ -49,10 +49,33 @@ Verified on the six §6 corpus renders (2026-07-15, `.localout/v12_*`).
   Fixes: delete target PDF before compiling + resolve paths to absolute
   POSIX form.
 
-## Pending Interior Standard v1 binding
-- Header font/size/case, folio placement, TOC typography (tocloft), chapter
-  opener drop, half-title styling, scene-break glyph, `\raggedbottom` vs
-  flush, per-genre differences (nonfiction footer is outside-corner).
-- Re-render + re-verify the six with `tools/render_local.py`, checker:
-  scratchpad `verify_presentation.py` pattern (TOC page, folios, header
-  spread sampling, doubling guard).
+## Interior Standard v1 — BOUND (2026-07-15)
+
+Both templates reconciled to `Pronto_Interior_Standard_v1_2026-07-15.md`;
+[TUNE] defaults adopted as-is. §6 checklist wired into
+`tests/interior_standard_check.py` (per-book; rows 1–6, 8–10 mechanical,
+row 7 SKIP per spec "[TUNE: automate]"). **All six corpus books pass every
+checked row** — no bad-rendering deltas to flag. Highlights of the bind:
+
+- 11pt/14.5pt body [BOUND §2] (was 12pt/1.2-stretch): page counts moved to
+  hatch 33 / carol 85 / frank 193 / P&P 342 / leaves 368 / DQ 1002.
+- 6×9 geometry [§1 row]: inner .85 / outer .65 / top .75 / bottom .85.
+- 1em indent, flush first paragraph after openers/scene breaks (§2) —
+  \scenebreak now ends with \@afterindentfalse\@afterheading.
+- Spaced-small-caps labels (\prontolabel, §4): titleformat label for
+  numbered chapters; converter wraps label-shaped starred titles (TOC
+  entries and header marks stay plain).
+- Headers small caps; folios bottom center on BOTH templates (§5 —
+  nonfiction outside-corner folios reconciled away).
+- Copyright page bound to §3.4 text (imprint + prontopublishing.com +
+  "First edition, {year}"); title page gains the PRONTO PUBLISHING foot
+  imprint (§3.3).
+- Conditional TOC via {{TOC_BLOCK}} (≥2 entries, §3.5); front matter no
+  longer emits \addcontentsline (TOC never lists it); chapter rows get
+  tocloft dot leaders, part rows bold/leaderless.
+- Row 9 note: bound H&J config yields underfull=0 / overfull=0 across the
+  corpus.
+- Nonfiction keeps bold display titles as a [TUNE] genre distinction.
+
+Trim coverage: only the two 6×9 templates exist; the Standard's 5×8,
+5.5×8.5, and 8.5×11 rows bind when those templates are authored (punchlist).

@@ -3,7 +3,8 @@
 % Author: Pronto Publishing
 % Version: 1.0.0
 
-\documentclass[12pt,openany]{book}
+% Interior Standard v1 (2026-07-15): 11pt body [BOUND s2]; openany [BOUND s4].
+\documentclass[11pt,openany]{book}
 
 % ============================================================================
 % PACKAGES
@@ -28,12 +29,12 @@
     paperwidth=6in,
     paperheight=9in,
     top=0.75in,
-    bottom=0.75in,
-    inner=0.875in,
-    outer=0.625in,
+    bottom=0.85in,
+    inner=0.85in,
+    outer=0.65in,
     headheight=14pt,
     headsep=0.25in,
-    footskip=0.25in
+    footskip=0.3in
 }
 
 % ============================================================================
@@ -56,11 +57,12 @@
 % TYPOGRAPHY
 % ============================================================================
 
-% Line spacing: 1.15 for non-fiction (tighter than fiction)
-\setstretch{1.15}
+% Interior Standard v1 s2 [BOUND]: 11pt / 14.5pt leading for 6x9
+% (14.5/13.6 = 1.066). Fiction/nonfiction share the bound body spec.
+\setstretch{1.066}
 
 % Paragraph formatting
-\setlength{\parindent}{0.25in}
+\setlength{\parindent}{1em}  % Standard s2 [BOUND]
 \setlength{\parskip}{0pt}
 
 % ---- H&J configuration (Interior Standard v1 draft defaults) ----
@@ -96,16 +98,16 @@
 % verso = book title, recto = current chapter title.
 \fancypagestyle{prontobody}{%
   \fancyhf{}%
-  \fancyhead[LE]{\small\itshape {{BOOK_TITLE}}}%
-  \fancyhead[RO]{\small\itshape\rightmark}%
-  \fancyfoot[LE,RO]{\thepage}%
+  \fancyhead[LE]{\small\scshape {{BOOK_TITLE}}}%
+  \fancyhead[RO]{\small\scshape\rightmark}%
+  \fancyfoot[C]{\thepage}%  % Standard s5 [BOUND]: bottom center
   \renewcommand{\headrulewidth}{0pt}%
 }
 
 % Plain style for chapter openers and front matter (folio only)
 \fancypagestyle{plain}{
     \fancyhf{}
-    \fancyfoot[LE,RO]{\thepage}
+    \fancyfoot[C]{\thepage}
     \renewcommand{\headrulewidth}{0pt}
 }
 
@@ -116,14 +118,18 @@
 % CHAPTER FORMATTING
 % ============================================================================
 
-% Chapter title formatting (more structured for non-fiction)
-\titleformat{\chapter}[display]
-    {\normalfont\huge\bfseries}
-    {\chaptertitlename\ \thechapter}
-    {20pt}
-    {\Huge}
+% Chapter opener — Standard §4 [BOUND]: spaced-small-caps label, title
+% beneath in display size. Sink ~1/3 page [TUNE]. Nonfiction keeps its
+% bold title weight (a [TUNE] genre distinction; label style is BOUND).
+\newcommand{\prontolabel}[1]{\textls[120]{\scshape #1}}
 
-\titlespacing*{\chapter}{0pt}{50pt}{40pt}
+\titleformat{\chapter}[display]
+    {\normalfont\centering}
+    {\Large\prontolabel{\chaptertitlename\ \thechapter}}
+    {1em}
+    {\Large\bfseries}
+
+\titlespacing*{\chapter}{0pt}{0.24\textheight}{40pt}
 
 % Section formatting
 \titleformat{\section}
@@ -144,17 +150,27 @@
 
 \renewcommand{\contentsname}{Contents}
 \setlength{\cftbeforechapskip}{8pt}
+% Standard §3.5 [BOUND]: chapter rows get dot leaders; part rows bold,
+% no leader.
+\renewcommand{\cftchapleader}{\cftdotfill{\cftdotsep}}
+\renewcommand{\cftpartfont}{\bfseries}
+\renewcommand{\cftpartleader}{\hfill}
+\renewcommand{\cftpartpagefont}{\bfseries}
 
 % ============================================================================
 % CUSTOM COMMANDS
 % ============================================================================
 
-% Scene break (less common in non-fiction, but included)
+% Scene break — Standard §4 [BOUND]: centered asterism, blank line
+% above/below; following paragraph flush (§2 [BOUND]).
+\makeatletter
 \newcommand{\scenebreak}{%
     \par\vspace{\baselineskip}%
-    \centerline{* * *}%
-    \par\vspace{\baselineskip}%
+    {\centering * * *\par}%
+    \vspace{\baselineskip}%
+    \@afterindentfalse\@afterheading
 }
+\makeatother
 
 % ============================================================================
 % DOCUMENT
@@ -188,20 +204,20 @@
 % wording is the second layer.
 {{SYSTEM_TITLE_PAGE}}
 
-% Copyright page
+% Copyright page — Standard §3.4 [BOUND] template text.
 \thispagestyle{empty}
 \vspace*{\fill}
 \begin{flushleft}
 \small
-Copyright \textcopyright\ {{YEAR}} by {{AUTHOR_NAME}}\\[1em]
-All rights reserved. No part of this book may be reproduced in any form or by any electronic or mechanical means, including information storage and retrieval systems, without permission in writing from the publisher, except by a reviewer who may quote brief passages in a review.\\[1em]
-First Edition{{ISBN_LINE}}
+Copyright \textcopyright\ {{YEAR}} {{AUTHOR_NAME}}. All rights reserved.{{ISBN_LINE}}\\[1em]
+Interior design and typesetting by Pronto Publishing\\
+prontopublishing.com\\[1em]
+First edition, {{YEAR}}
 \end{flushleft}
 \clearpage
 
-% Table of contents
-\tableofcontents
-\clearpage
+% Table of contents — Standard §3.5 [BOUND]: conditional (>= 2 entries).
+{{TOC_BLOCK}}
 
 % Main matter
 \mainmatter

@@ -82,6 +82,8 @@ def _system_title_page_latex(artifact: Dict[str, Any]) -> str:
             "% (author supplied a title page; converter renders it from\n"
             "% title_page-role blocks)."
         )
+    # Interior Standard v1 §3.3 [BOUND]: title / (subtitle) / author,
+    # "PRONTO PUBLISHING" imprint line at foot.
     return (
         "\\begin{titlepage}\n"
         "    \\centering\n"
@@ -89,8 +91,23 @@ def _system_title_page_latex(artifact: Dict[str, Any]) -> str:
         "    {\\Huge\\textbf{{{BOOK_TITLE}}}}\\\\[1em]\n"
         "    {\\Large {{AUTHOR_NAME}}}\n"
         "    \\vfill\n"
+        "    {\\small\\textls[160]{\\scshape PRONTO PUBLISHING}}\\\\[0.4in]\n"
         "\\end{titlepage}"
     )
+
+
+def _toc_block_latex(blocks) -> str:
+    """{{TOC_BLOCK}} substitution — Interior Standard v1 §3.5 [BOUND]:
+    a TOC is included when the artifact yields >= 2 TOC entries
+    (chapter_heading + part_divider + back_matter; front matter is
+    never listed per §3.5)."""
+    entries = sum(
+        1 for b in blocks
+        if b.get("role") in ("chapter_heading", "part_divider", "back_matter")
+    )
+    if entries >= 2:
+        return "\\tableofcontents\n\\clearpage"
+    return f"% TOC omitted: {entries} entry(ies) < 2 (Interior Standard v1 s3.5)"
 
 
 class InteriorProcessor:
@@ -262,6 +279,10 @@ class InteriorProcessor:
                     "{{ISBN_LINE}}",
                     f"\\\\[1em]\nISBN: {params.get('isbn')}"
                     if params.get("isbn") else "",
+                )
+                .replace(
+                    "{{TOC_BLOCK}}",
+                    _toc_block_latex(artifact['content']['blocks']), 1,
                 )
             )
             

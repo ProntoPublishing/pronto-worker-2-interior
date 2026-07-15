@@ -357,10 +357,10 @@ class BlocksToLatexConverter:
                 "\\clearpage"
             )
         # generic / preface / foreword / introduction / note_to_reader / etc.
-        return (
-            f"\\chapter*{{{text_body}}}\n"
-            f"\\addcontentsline{{toc}}{{chapter}}{{{text_body}}}"
-        )
+        # Interior Standard v1 §3.5 [BOUND]: front-matter items are NOT
+        # listed in the TOC — no \addcontentsline here (back matter
+        # keeps its entries).
+        return f"\\chapter*{{{text_body}}}"
 
     def _render_part_divider(self, block: Dict[str, Any], ctx: Dict[str, Any]) -> str:
         """Part divider. Per I-5 always carries force_page_break: true.
@@ -515,8 +515,13 @@ class BlocksToLatexConverter:
                     f"{chapter_number!r} not representable as an integer; "
                     f"rendering unnumbered"
                 )
+            # Interior Standard v1 §4 [BOUND]: label lines in spaced
+            # small caps. Only label-shaped/synthesized titles get the
+            # \prontolabel wrap (real titles are display text); the TOC
+            # entry and header mark stay plain.
+            display = f"\\prontolabel{{{title}}}" if synthesized else title
             heading = (
-                f"\\chapter*{{{title}}}\n"
+                f"\\chapter*{{{display}}}\n"
                 f"\\addcontentsline{{toc}}{{chapter}}{{{title}}}"
             )
         # Running-header mark (recto = chapter title). Emitted explicitly
