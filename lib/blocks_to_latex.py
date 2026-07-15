@@ -40,12 +40,15 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 
-# Canonical Layer 2 role enum from Doc 22 v1.0.2.
+# Canonical Layer 2 role enum from Doc 22 v1.0.2, plus the v2.1 schema
+# addition (chapter_subtitle, amendment spec §2.3 — a title paired to the
+# landmark above it: Carol's stave names, Hatch's italic chapter subtitles).
 ROLES = frozenset({
     "title_page",
     "front_matter",
     "part_divider",
     "chapter_heading",
+    "chapter_subtitle",
     "body_paragraph",
     "scene_break",
     "back_matter",
@@ -74,6 +77,7 @@ class BlocksToLatexConverter:
         "front_matter":    "_render_front_matter",
         "part_divider":    "_render_part_divider",
         "chapter_heading": "_render_chapter_heading",
+        "chapter_subtitle": "_render_chapter_subtitle",
         "body_paragraph":  "_render_body_paragraph",
         "scene_break":     "_render_scene_break",
         "back_matter":     "_render_back_matter",
@@ -158,9 +162,22 @@ class BlocksToLatexConverter:
 
             handler_name = self.HANDLER_MAP.get(role)
             if handler_name is None:
-                # __init__ guarantees this can't happen, but defensive.
-                logger.error(f"No handler for role {role!r}")
-                out.append(f"% ERROR: no handler for role {role}")
+                # FAIL-SAFE DEFAULT (amendment spec §5.3). A role this
+                # converter doesn't know — a future schema addition —
+                # must never cost the reader content. Render the block's
+                # text as a plain body paragraph and log loudly. The
+                # worst case becomes a formatting deficiency, not silent
+                # content loss.
+                logger.error(
+                    f"UNKNOWN ROLE {role!r} on block {block.get('id')} — "
+                    f"no handler; rendering as plain body text (fail-safe "
+                    f"default). A W2 update for this role is overdue."
+                )
+                fallback = self._render_spans(block)
+                out.append(f"% WARNING: unknown role {role} rendered as body text")
+                if fallback:
+                    out.append(fallback)
+                    out.append("")
                 continue
             handler = getattr(self, handler_name)
             ctx = {"degraded": degraded_mode, "params": params}
@@ -472,6 +489,20 @@ class BlocksToLatexConverter:
                     total += v
             return total if total > 0 else None
         return None
+
+    def _render_chapter_subtitle(self, block: Dict[str, Any], ctx: Dict[str, Any]) -> str:
+        """v2.1 role: a title paired to the landmark above it (stave
+        names, chapter subtitles). Italic centered line beneath the
+        heading — full styling deferred per amendment spec §5.2.
+        """
+        text = self._plain(block)
+        if not text:
+            return ""
+        return (
+            "\\begin{center}\n"
+            f"\\itshape {text}\n"
+            "\\end{center}"
+        )
 
     def _render_body_paragraph(self, block: Dict[str, Any], ctx: Dict[str, Any]) -> str:
         return self._render_spans(block)

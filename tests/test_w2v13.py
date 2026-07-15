@@ -460,6 +460,85 @@ class Test_ConverterChapterHeading(unittest.TestCase):
         self.assertIn("\\addcontentsline{toc}{chapter}{Prologue}", out)
 
 
+class Test_Schema21Prerequisite(unittest.TestCase):
+    """Amendment spec §5: schema-2.1 acceptance, chapter_subtitle handler,
+    and the fail-safe default for unknown roles.
+    """
+
+    def setUp(self):
+        self.c = BlocksToLatexConverter()
+
+    def _block(self, role, text, **extra):
+        b = {"id": "b_000001", "type": "paragraph", "role": role,
+             "spans": [{"text": text, "marks": []}]}
+        b.update(extra)
+        return b
+
+    # -- §5.1 dispatcher accepts 2.1, still fail-loud on unknown ----------
+
+    def test_dispatcher_accepts_2_1(self):
+        art = _minimal_v2_artifact([
+            self._block("body_paragraph", "Hello."),
+        ])
+        art["schema_version"] = "2.1"
+        out = read_artifact(art)
+        self.assertEqual(out["schema_version"], "2.1")
+
+    def test_dispatcher_still_rejects_future_versions(self):
+        art = _minimal_v2_artifact([
+            self._block("body_paragraph", "Hello."),
+        ])
+        art["schema_version"] = "3.0"
+        with self.assertRaises(UnsupportedSchemaVersionError):
+            read_artifact(art)
+
+    # -- §5.2 chapter_subtitle handler -------------------------------------
+
+    def test_chapter_subtitle_renders_italic_centered(self):
+        blocks = [
+            {"id": "b_000001", "type": "heading", "heading_level": 2,
+             "role": "chapter_heading", "chapter_number": "ONE",
+             "chapter_title": "Chapter ONE"},
+            self._block("chapter_subtitle", "MARLEY'S GHOST."),
+        ]
+        out = self.c.convert(blocks, params={})
+        self.assertIn("\\itshape MARLEY'S GHOST.", out)
+        self.assertIn("\\begin{center}", out)
+
+    def test_chapter_subtitle_collapses_internal_newlines(self):
+        out = self.c.convert(
+            [self._block("chapter_subtitle", "Line one\n\nLine two")], params={}
+        )
+        self.assertNotIn("\n\nLine", out.split("\\itshape ", 1)[-1].split("\n")[0])
+        self.assertIn("Line one Line two", out)
+
+    # -- §5.3 fail-safe default: unknown role's text SURVIVES --------------
+
+    def test_unknown_role_text_survives_to_output(self):
+        """The bug class this kills: converter used to emit only a
+        LaTeX comment for unknown roles — silent content loss. Now the
+        text must appear in the body output.
+        """
+        blocks = [self._block("some_future_role", "This text must not vanish.")]
+        out = self.c.convert(blocks, params={})
+        self.assertIn("This text must not vanish.", out)
+        self.assertIn("% WARNING: unknown role some_future_role", out)
+
+    def test_unknown_role_logs_loudly(self):
+        import logging as _logging
+        blocks = [self._block("mystery_role", "Content.")]
+        with self.assertLogs("lib.blocks_to_latex", level=_logging.ERROR) as cm:
+            self.c.convert(blocks, params={})
+        self.assertTrue(any("UNKNOWN ROLE" in m for m in cm.output))
+
+    def test_unknown_role_preserves_marks(self):
+        blocks = [{"id": "b_000001", "type": "paragraph",
+                   "role": "some_future_role",
+                   "spans": [{"text": "kept", "marks": ["italic"]}]}]
+        out = self.c.convert(blocks, params={})
+        self.assertIn("\\textit{kept}", out)
+
+
 class Test_ConverterChapterOrdinal(unittest.TestCase):
     """Book 02 (P&P) fix 1: the printed ordinal must come from the
     artifact's chapter_number, never LaTeX's own chapter counter. The
