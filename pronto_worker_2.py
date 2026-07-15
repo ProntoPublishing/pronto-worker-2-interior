@@ -57,6 +57,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Single source of truth for the deployed worker version.
+# Referenced by app.py's /health endpoint — bump only here.
+WORKER_VERSION = "1.4.0"
+
 
 def _system_title_page_latex(artifact: Dict[str, Any]) -> str:
     """Build the {{SYSTEM_TITLE_PAGE}} substitution.
@@ -95,7 +99,7 @@ class InteriorProcessor:
     def __init__(self):
         """Initialize processor with all dependencies."""
         self.worker_name = "worker_2_interior_formatter"
-        self.worker_version = "1.4.0"
+        self.worker_version = WORKER_VERSION
         
         # Initialize clients
         self.r2_client = ProntoR2Client(

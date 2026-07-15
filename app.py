@@ -14,7 +14,7 @@ import os
 import json
 import logging
 from flask import Flask, request, jsonify
-from pronto_worker_2 import InteriorProcessor
+from pronto_worker_2 import InteriorProcessor, WORKER_VERSION
 
 # Configure logging
 logging.basicConfig(
@@ -31,7 +31,7 @@ def health():
     return jsonify({
         'status': 'healthy',
         'service': 'worker_2_interior_formatter',
-        'version': '1.2.0'
+        'version': WORKER_VERSION
     })
 
 @app.route('/process', methods=['POST'])
