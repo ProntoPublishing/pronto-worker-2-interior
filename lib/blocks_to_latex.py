@@ -377,6 +377,59 @@ class BlocksToLatexConverter:
     # sources produce fused headings like "CHAPTERXXVII." (Book 02).
     _CHAPTER_LINE_RE = re.compile(r"^chapter", re.IGNORECASE)
 
+    # Label-shaped title detection (schema 2.1 / rules 1.1 coordination):
+    # W1 v1.1 emits chapter_number as an INTEGER ("the integer is
+    # metadata") and synthesizes titles like "Letter IV" / "Stave ONE" /
+    # "Chapter XXVII" from the source's section word + display ordinal.
+    # A title that is nothing but such a label must render ONCE (the
+    # \chapter* path), preserving the source's word and ordinal style —
+    # otherwise the template prints its own "CHAPTER n" above it and
+    # every heading doubles (Frankenstein letters rendered "CHAPTER 1 /
+    # LETTER I"). Lexicon mirrors W1's landmarks.py — shared-library
+    # consolidation punchlist item, same as the roman parser.
+    _LABEL_RE = re.compile(
+        r"^(?:chapter|chap\.?|stave|letter|canto|section|act|scene|lesson"
+        r"|part|book|volume|vol\.?)\s*(?P<ordinal>[\w\-]+?)[.:]?$",
+        re.IGNORECASE,
+    )
+
+    _WORD_ORDINALS = {
+        **{w: i for i, w in enumerate(
+            ("ONE", "TWO", "THREE", "FOUR", "FIVE", "SIX", "SEVEN",
+             "EIGHT", "NINE"), 1)},
+        **{w: i for i, w in enumerate(
+            ("TEN", "ELEVEN", "TWELVE", "THIRTEEN", "FOURTEEN", "FIFTEEN",
+             "SIXTEEN", "SEVENTEEN", "EIGHTEEN", "NINETEEN"), 10)},
+        "TWENTY": 20, "THIRTY": 30, "FORTY": 40, "FIFTY": 50,
+        "SIXTY": 60, "SEVENTY": 70, "EIGHTY": 80, "NINETY": 90,
+    }
+
+    def _title_is_label(self, head: str, number_int: Optional[int]) -> bool:
+        """True when the chapter_title is just the heading label itself
+        (section word + the same ordinal chapter_number carries)."""
+        if number_int is None:
+            return False
+        m = self._LABEL_RE.match(head.strip())
+        if not m:
+            return False
+        tok = m.group("ordinal")
+        value = self._chapter_number_as_int(tok)
+        if value is None:
+            value = self._word_ordinal_to_int(tok)
+        return value == number_int
+
+    def _word_ordinal_to_int(self, token: str) -> Optional[int]:
+        s = re.sub(r"[\s\-]+", " ", token.strip().upper())
+        if s in self._WORD_ORDINALS:
+            return self._WORD_ORDINALS[s]
+        parts = s.split(" ")
+        if (len(parts) == 2 and parts[0] in self._WORD_ORDINALS
+                and parts[1] in self._WORD_ORDINALS
+                and self._WORD_ORDINALS[parts[0]] % 10 == 0
+                and self._WORD_ORDINALS[parts[1]] < 10):
+            return self._WORD_ORDINALS[parts[0]] + self._WORD_ORDINALS[parts[1]]
+        return None
+
     def _render_chapter_heading(self, block: Dict[str, Any], ctx: Dict[str, Any]) -> str:
         """v2 chapter heading: chapter_number + chapter_title are
         separate fields.
@@ -434,12 +487,12 @@ class BlocksToLatexConverter:
                 "\\end{center}"
             )
 
+        number_int = self._chapter_number_as_int(chapter_number)
         synthesized = (
             chapter_number is not None
             and head.rstrip(".").strip().lower()
             == f"chapter {chapter_number}".lower()
-        )
-        number_int = self._chapter_number_as_int(chapter_number)
+        ) or self._title_is_label(head, number_int)
 
         if chapter_number is not None and not synthesized and number_int is not None:
             heading = (
