@@ -24,3 +24,7 @@ venv/
 ENV/
 /tmp/
 *.log
+
+# Local render loop workspace (tools/render_local.py)
+.localfonts/
+.localout/

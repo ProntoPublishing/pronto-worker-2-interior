@@ -1,5 +1,5 @@
 """
-Blocks to LaTeX Converter v3.0.0 (v1.3 / consume-manuscript-v2)
+Blocks to LaTeX Converter v3.1.0 (v1.3.1 chapter-heading fixes)
 ================================================================
 
 Consumes manuscript.v2.0-shaped blocks and emits LaTeX body markup.
@@ -34,6 +34,7 @@ Design
 """
 from __future__ import annotations
 import logging
+import re
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -242,13 +243,19 @@ class BlocksToLatexConverter:
         Used for chapter titles, headings, and similar where running the
         full mark-rendering would put `\\textbf{}` etc. inside `\\chapter{}`
         — legal LaTeX but unusual.
+
+        Whitespace runs (including newlines) collapse to single spaces:
+        every caller passes the result into a sectioning-command argument,
+        where an embedded blank line is a LaTeX error that nonstopmode
+        "recovers" from by spilling the argument as unstyled body text
+        (Book 02 corpus finding, 2026-07-14).
         """
         spans = block.get("spans")
         if isinstance(spans, list) and spans:
             text = "".join(s.get("text", "") for s in spans if isinstance(s, dict))
         else:
             text = block.get("text", "") or ""
-        return self._escape(text)
+        return self._escape(" ".join(text.split()))
 
     # -- Role handlers ------------------------------------------------------
 
@@ -348,23 +355,123 @@ class BlocksToLatexConverter:
         prefix = "\\clearpage\n" if force_break else ""
         return f"{prefix}\\part*{{{title}}}\n\\addcontentsline{{toc}}{{part}}{{{title}}}"
 
+    # Matches the line inside a multi-line chapter_title that carries the
+    # chapter designation. Deliberately a bare prefix (no \b): corpus
+    # sources produce fused headings like "CHAPTERXXVII." (Book 02).
+    _CHAPTER_LINE_RE = re.compile(r"^chapter", re.IGNORECASE)
+
     def _render_chapter_heading(self, block: Dict[str, Any], ctx: Dict[str, Any]) -> str:
         """v2 chapter heading: chapter_number + chapter_title are
-        separate fields. Numbered chapters get \\chapter (LaTeX auto-
-        prefixes "CHAPTER N" via the template's titlesec config);
-        unnumbered chapters get \\chapter* + a TOC line.
+        separate fields.
 
-        This is where the doubled-chapter bug dies: chapter_title is
-        the title alone, never "Chapter N\\nTitle".
+        Two hardening rules from the Book 02 (P&P) corpus run, 2026-07-14:
+
+        1. The printed ordinal comes from the artifact's chapter_number,
+           never from LaTeX's own chapter counter. \\chapter{} auto-numbers
+           sequentially over *numbered* chapters only, so any unnumbered
+           chapter in between desynchronizes the label (Chapter IV rendered
+           "CHAPTER 2"). We \\setcounter{chapter}{N-1} from the artifact
+           before every numbered \\chapter.
+
+        2. chapter_title may span multiple lines: DOCX conversions can merge
+           adjacent text (e.g. an illustration caption) into the heading
+           block. A blank line inside a sectioning-command argument is a
+           LaTeX error, and nonstopmode "recovers" by spilling the argument
+           into the body as unstyled text — dropping content and doubling
+           the heading. Titles are therefore split into lines: the
+           chapter-pattern line becomes the styled heading; every other
+           line renders as a centered italic line directly beneath it.
+           Nothing is dropped. Single-line titles take the exact same path
+           they always did.
+
+        When the source heading was number-only (C-001 synthesizes
+        chapter_title as "Chapter <n>"), printing the template's label
+        AND the synthesized title would show the ordinal twice — so those
+        render once, via \\chapter*, preserving the source's numbering
+        style (e.g. roman "CHAPTER IV" rather than arabic "CHAPTER 4").
         """
-        title = self._escape(block.get("chapter_title") or "")
+        raw_title = block.get("chapter_title") or ""
         chapter_number = block.get("chapter_number")
-        if chapter_number is None:
-            return (
+
+        lines = [ln.strip() for ln in raw_title.splitlines() if ln.strip()]
+        if not lines:
+            lines = [raw_title.strip()]
+
+        if len(lines) == 1:
+            head, extras = lines[0], []
+        else:
+            matches = [
+                i for i, ln in enumerate(lines) if self._CHAPTER_LINE_RE.match(ln)
+            ]
+            pick = matches[0] if len(matches) == 1 else 0
+            head = lines[pick]
+            extras = [ln for i, ln in enumerate(lines) if i != pick]
+
+        title = self._escape(head)
+        extra_latex = ""
+        if extras:
+            extra_lines = " \\\\\n".join(self._escape(e) for e in extras)
+            extra_latex = (
+                "\n\\begin{center}\n"
+                f"\\itshape {extra_lines}\n"
+                "\\end{center}"
+            )
+
+        synthesized = (
+            chapter_number is not None
+            and head.rstrip(".").strip().lower()
+            == f"chapter {chapter_number}".lower()
+        )
+        number_int = self._chapter_number_as_int(chapter_number)
+
+        if chapter_number is not None and not synthesized and number_int is not None:
+            heading = (
+                f"\\setcounter{{chapter}}{{{number_int - 1}}}\n"
+                f"\\chapter{{{title}}}"
+            )
+        else:
+            if chapter_number is not None and not synthesized and number_int is None:
+                # e.g. chapter_number "Five": no counter representation.
+                # The title still renders; the ordinal is only in the text.
+                logger.warning(
+                    f"Block {block.get('id')}: chapter_number "
+                    f"{chapter_number!r} not representable as an integer; "
+                    f"rendering unnumbered"
+                )
+            heading = (
                 f"\\chapter*{{{title}}}\n"
                 f"\\addcontentsline{{toc}}{{chapter}}{{{title}}}"
             )
-        return f"\\chapter{{{title}}}"
+        return heading + extra_latex
+
+    @staticmethod
+    def _chapter_number_as_int(number: Any) -> Optional[int]:
+        """Coerce the artifact's chapter_number (int, arabic string, or
+        roman-numeral string per schema) to a positive int, or None when
+        it has no integer representation (e.g. "Five").
+        """
+        if isinstance(number, bool) or number is None:
+            return None
+        if isinstance(number, int):
+            return number if number > 0 else None
+        if not isinstance(number, str):
+            return None
+        s = number.strip()
+        if s.isdigit():
+            value = int(s)
+            return value if value > 0 else None
+        if s and re.fullmatch(r"[IVXLCDM]+", s.upper()):
+            values = {"I": 1, "V": 5, "X": 10, "L": 50, "C": 100, "D": 500, "M": 1000}
+            total = 0
+            upper = s.upper()
+            for i, ch in enumerate(upper):
+                v = values[ch]
+                if i + 1 < len(upper) and values[upper[i + 1]] > v:
+                    total -= v
+                else:
+                    total += v
+            return total if total > 0 else None
+        return None
 
     def _render_body_paragraph(self, block: Dict[str, Any], ctx: Dict[str, Any]) -> str:
         return self._render_spans(block)

@@ -460,6 +460,129 @@ class Test_ConverterChapterHeading(unittest.TestCase):
         self.assertIn("\\addcontentsline{toc}{chapter}{Prologue}", out)
 
 
+class Test_ConverterChapterOrdinal(unittest.TestCase):
+    """Book 02 (P&P) fix 1: the printed ordinal must come from the
+    artifact's chapter_number, never LaTeX's own chapter counter. The
+    counter only ticks on numbered \\chapter calls, so interleaved
+    unnumbered chapters desynchronize it (Chapter IV rendered
+    "CHAPTER 2" on the P&P run, 2026-07-14).
+    """
+
+    def setUp(self):
+        self.c = BlocksToLatexConverter()
+
+    def _block(self, number, title):
+        return {
+            "id": "b_000001", "type": "heading", "heading_level": 2,
+            "role": "chapter_heading",
+            "chapter_number": number,
+            "chapter_title": title,
+        }
+
+    def test_integer_number_sets_counter_from_artifact(self):
+        out = self.c.convert([self._block(4, "A Real Title")], params={})
+        self.assertIn("\\setcounter{chapter}{3}", out)
+        self.assertIn("\\chapter{A Real Title}", out)
+
+    def test_roman_number_sets_counter_from_artifact(self):
+        out = self.c.convert([self._block("IX", "A Real Title")], params={})
+        self.assertIn("\\setcounter{chapter}{8}", out)
+
+    def test_counter_not_sequential_across_blocks(self):
+        blocks = [
+            self._block(1, "First"),
+            self._block(None, "Interlude"),
+            self._block(40, "Fortieth"),
+        ]
+        out = self.c.convert(blocks, params={})
+        self.assertIn("\\setcounter{chapter}{39}", out)
+
+    def test_synthesized_number_only_title_renders_once(self):
+        """C-001 synthesizes chapter_title "Chapter <n>" for number-only
+        source headings. Label + synthesized title would print the
+        ordinal twice, so these render once via \\chapter*, preserving
+        the source's numbering style (roman stays roman).
+        """
+        out = self.c.convert([self._block("IV", "Chapter IV")], params={})
+        self.assertIn("\\chapter*{Chapter IV}", out)
+        self.assertNotIn("\\setcounter", out)
+
+    def test_unrepresentable_number_falls_back_to_star(self):
+        out = self.c.convert([self._block("Five", "The Journey")], params={})
+        self.assertIn("\\chapter*{The Journey}", out)
+        self.assertNotIn("\\setcounter", out)
+
+    def test_number_coercion(self):
+        f = BlocksToLatexConverter._chapter_number_as_int
+        self.assertEqual(f(7), 7)
+        self.assertEqual(f("12"), 12)
+        self.assertEqual(f("IV"), 4)
+        self.assertEqual(f("LXI"), 61)
+        self.assertIsNone(f("Five"))
+        self.assertIsNone(f(None))
+        self.assertIsNone(f(0))
+        self.assertIsNone(f(True))
+
+
+class Test_ConverterMultiLineChapterTitle(unittest.TestCase):
+    """Book 02 (P&P) fix 2: multi-line chapter_title (DOCX conversions
+    merge adjacent text, e.g. illustration captions, into the heading
+    block). Previously the blank line inside \\chapter*{...} was a LaTeX
+    error — nonstopmode spilled the argument as doubled body-size text
+    and the caption line vanished. Now: chapter line becomes the styled
+    heading, other lines render beneath it, nothing dropped.
+    """
+
+    def setUp(self):
+        self.c = BlocksToLatexConverter()
+
+    def _out(self, title, number=None):
+        return self.c.convert([{
+            "id": "b_000001", "type": "heading", "heading_level": 2,
+            "role": "chapter_heading",
+            "chapter_number": number,
+            "chapter_title": title,
+        }], params={})
+
+    def test_caption_merged_title_keeps_caption_and_heads_chapter_line(self):
+        out = self._out("I hope Mr. Bingley will like it. \n\nCHAPTER II.")
+        self.assertIn("\\chapter*{CHAPTER II.}", out)
+        self.assertIn("I hope Mr. Bingley will like it.", out)
+        # No raw newlines inside any sectioning argument.
+        self.assertNotIn("\\chapter*{I hope", out)
+        # Heading appears exactly once.
+        self.assertEqual(out.count("CHAPTER II."), 2)  # heading + TOC line
+
+    def test_toc_line_uses_chapter_line_only(self):
+        out = self._out("“On the way.” \n\nCHAPTER XL.")
+        self.assertIn("\\addcontentsline{toc}{chapter}{CHAPTER XL.}", out)
+        self.assertNotIn("\\addcontentsline{toc}{chapter}{“On the way.”", out)
+
+    def test_fused_chapter_word_still_recognized(self):
+        # Book 02 source carries "CHAPTERXXVII." with no space.
+        out = self._out("“On the Stairs.” \n\nCHAPTERXXVII.")
+        self.assertIn("\\chapter*{CHAPTERXXVII.}", out)
+        self.assertIn("On the Stairs.", out)
+
+    def test_multiline_without_chapter_pattern_heads_first_line(self):
+        out = self._out("The Title\nAn Unexpected Subtitle")
+        self.assertIn("\\chapter*{The Title}", out)
+        self.assertIn("An Unexpected Subtitle", out)
+
+    def test_single_line_title_path_unchanged(self):
+        out = self._out("Prologue")
+        self.assertIn("\\chapter*{Prologue}", out)
+        self.assertIn("\\addcontentsline{toc}{chapter}{Prologue}", out)
+        self.assertNotIn("\\begin{center}", out)
+
+    def test_no_blank_line_reaches_sectioning_argument(self):
+        out = self._out("Caption line. \n\nCHAPTER III.", number=None)
+        for arg_match in __import__("re").finditer(
+            r"\\chapter\*?\{([^{}]*)\}", out
+        ):
+            self.assertNotIn("\n", arg_match.group(1))
+
+
 class Test_ConverterPartDivider(unittest.TestCase):
 
     def test_part_divider_clears_page_then_emits_part(self):
