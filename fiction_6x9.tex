@@ -198,16 +198,16 @@
 % Half-title verso intentionally blank
 \thispagestyle{empty}\null\clearpage
 
-% Title page is H-001-conditional. pronto_worker_2.py fills the
-% placeholder on the next line: when H-001 fired (author supplied a
-% title page; system one suppressed) the placeholder becomes a
-% suppression comment. Otherwise it becomes the standard system
-% title page block, with the book title and author name substituted
-% in the next template-fill step. Do NOT reference the placeholder
-% literal in this comment — Python's str.replace() substitutes every
-% occurrence and the multi-line replacement breaks out of '%' at its
-% first newline. count=1 in the worker is the defense; this comment
-% wording is the second layer.
+% Title-page SLOT (Interior Standard §3: recto here, copyright on the
+% verso behind it). pronto_worker_2.py fills the placeholder on the
+% next line with the H-001 arbitration winner: fired → the author's
+% classified title cluster (folio-free, ends with \clearpage); not
+% fired → the standard system title page block. Exactly ONE title page
+% per book, always in this slot, never in the body. Do NOT reference
+% the placeholder literal in this comment — Python's str.replace()
+% substitutes every occurrence and the multi-line replacement breaks
+% out of '%' at its first newline. count=1 in the worker is the
+% defense; this comment wording is the second layer.
 {{SYSTEM_TITLE_PAGE}}
 
 % Copyright page — Standard §3.4 [BOUND] template text.

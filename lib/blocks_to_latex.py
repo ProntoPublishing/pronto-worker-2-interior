@@ -128,17 +128,17 @@ class BlocksToLatexConverter:
         blocks: List[Dict[str, Any]],
         params: Dict[str, Any],
         degraded_mode: bool = False,
-        suppress_title_page: bool = False,
     ) -> str:
         """Convert v2.0 blocks to LaTeX body content.
 
         Returns a string suitable for substituting into the {{CONTENT}}
         placeholder in fiction_6x9.tex / nonfiction_6x9.tex.
 
-        suppress_title_page: pass True when H-001 did NOT fire (the
-        template emits the system title page). The classified source
-        title cluster must then not re-render as a second styled title
-        page at body start — exactly one title page per document.
+        Title-page invariant (§6 review, 2026-07-16): title_page-role
+        blocks NEVER render here — the body is the wrong position for a
+        title page. They render (when H-001 chose them) in the template's
+        front-matter §3 slot via render_title_page_cluster(); this
+        method emits traceability comments in their place.
         """
         logger.info(
             f"Converting {len(blocks)} v2 blocks to LaTeX "
@@ -186,11 +186,7 @@ class BlocksToLatexConverter:
                     out.append("")
                 continue
             handler = getattr(self, handler_name)
-            ctx = {
-                "degraded": degraded_mode,
-                "params": params,
-                "suppress_title_page": suppress_title_page,
-            }
+            ctx = {"degraded": degraded_mode, "params": params}
             latex = handler(block, ctx)
             if latex:
                 out.append(latex)
@@ -287,62 +283,62 @@ class BlocksToLatexConverter:
     # -- Role handlers ------------------------------------------------------
 
     def _render_title_page(self, block: Dict[str, Any], ctx: Dict[str, Any]) -> str:
-        """Render an author-supplied title-page cluster member.
-
-        Each cluster block is centered. The first one (positional role
-        "title" per C-003's classification_notes) is rendered larger;
-        subsequent blocks (subtitle, byline) progressively smaller.
-        Falls back to a single sizing if the positional tag is absent.
-
-        H-001 coordination (both directions — §6 review finding, 2026-07-16):
-        the template-fill layer (pronto_worker_2.py, applied_rules[] H-001
-        entry) decides which title page wins. H-001 fired → system page
-        suppressed there, this handler renders the author cluster. H-001
-        did NOT fire → system page renders, and THIS side suppresses the
-        classified cluster (ctx["suppress_title_page"]) so the source
-        title lines don't re-render as a second styled title page at
-        body start. Exactly one title page per document.
+        """title_page-role blocks NEVER render in the body (§6 review
+        invariant, 2026-07-16): exactly one title page per book, in the
+        front-matter §3 position. H-001 arbitration decides what fills
+        the template's title-page slot — fired → this cluster, rendered
+        there via render_title_page_cluster(); not fired → the system
+        page. Either way the body copy is suppressed; this comment is
+        the traceability marker.
         """
-        if ctx.get("suppress_title_page"):
-            return (
-                f"% title_page block {block.get('id')} suppressed "
-                f"(system title page selected; H-001 did not fire)"
-            )
-        text = self._render_spans(block)
-        if not text:
-            return ""
-
-        # Positional sub-role from classification_notes; absent on v1
-        # synthesized title_page blocks.
-        notes = block.get("classification_notes") or []
-        positional = ""
-        for n in notes:
-            if "positional role:" in n:
-                positional = n.split(":", 1)[-1].strip().lower()
-                break
-
-        if positional == "title" or not positional:
-            # Title (or unknown — assume primary).
-            return (
-                "\\begin{center}\n"
-                "\\vspace*{1in}\n"
-                f"{{\\Huge\\textbf{{{text}}}}}\n"
-                "\\end{center}\n"
-                "\\vspace{1em}"
-            )
-        if positional == "subtitle":
-            return (
-                "\\begin{center}\n"
-                f"{{\\Large {text}}}\n"
-                "\\end{center}\n"
-                "\\vspace{1em}"
-            )
-        # author_or_byline / anything else.
         return (
+            f"% title_page block {block.get('id')} suppressed in body "
+            f"(renders in the front-matter slot iff H-001 chose it)"
+        )
+
+    @staticmethod
+    def _positional_of(block: Dict[str, Any]) -> str:
+        """Positional sub-role ("title" / "subtitle" / "author_or_byline")
+        from C-003's classification_notes; "" when absent (v1
+        synthesized title_page blocks)."""
+        for n in (block.get("classification_notes") or []):
+            if "positional role:" in n:
+                return n.split(":", 1)[-1].strip().lower()
+        return ""
+
+    def render_title_page_cluster(self, blocks: List[Dict[str, Any]]) -> str:
+        """LaTeX for the front-matter §3 title-page SLOT, built from the
+        author's classified title_page cluster (call only when H-001
+        fired). One folio-free recto: title \\Huge, subtitle \\Large,
+        byline/anything-else \\large, in document order; ends with
+        \\clearpage so the copyright page lands on the verso behind it,
+        exactly like the system title page it replaces.
+        """
+        lines: List[str] = []
+        for block in blocks:
+            if block.get("role") != "title_page":
+                continue
+            text = self._render_spans(block)
+            if not text:
+                continue
+            positional = self._positional_of(block)
+            if positional == "title" or not positional:
+                lines.append(f"{{\\Huge\\textbf{{{text}}}}}\\par\\vspace{{1.5em}}")
+            elif positional == "subtitle":
+                lines.append(f"{{\\Large {text}}}\\par\\vspace{{1em}}")
+            else:  # author_or_byline / unknown positional
+                lines.append(f"{{\\large {text}}}\\par\\vspace{{1em}}")
+        if not lines:
+            # Defensive: slot caller checked H-001, but the cluster is
+            # empty — emit nothing rather than a blank styled page.
+            return "% H-001 fired but title_page cluster is empty"
+        return (
+            "\\thispagestyle{empty}\n"
             "\\begin{center}\n"
-            f"{{\\large {text}}}\n"
-            "\\end{center}\n"
+            "\\vspace*{1in}\n"
+            + "\n".join(lines) + "\n"
             "\\vfill\n"
+            "\\end{center}\n"
             "\\clearpage"
         )
 
@@ -673,7 +669,7 @@ class BlocksToLatexConverter:
         """
         return (
             "\\begin{center}\n"
-            "\\textit{[Table]}\n"
+            "\\textit{[Table omitted from this edition]}\n"
             "\\end{center}"
         )
 
@@ -683,7 +679,7 @@ class BlocksToLatexConverter:
         """
         return (
             "\\begin{center}\n"
-            "\\textit{[Illustration]}\n"
+            "\\textit{[Illustration omitted from this edition]}\n"
             "\\end{center}"
         )
 

@@ -85,22 +85,31 @@ Trim coverage: only the two 6×9 templates exist; the Standard's 5×8,
 Three defects found by eyeball + one new bound convention; all fixed and
 ratcheted into the harness (rows 11–14):
 
-1. **Duplicate title page** — H-001 coordination was one-directional:
-   fired → system page suppressed, but NOT fired → the C-003-classified
-   source title cluster still re-rendered as a styled title page at body
-   start, after the system page. Now `convert(...,
-   suppress_title_page=not h001_fired)` suppresses the cluster when the
-   system page wins (worker + render_local both pass it). Corpus: only
-   Hatch has H-001 fired; the other five all carried the duplicate.
+1. **Title-page invariant (REWORKED after Jesse's re-review)** — the two
+   sample books failed OPPOSITE ways: P&P rendered TWO title pages
+   (system in front matter + source cluster as body page 1) and Hatch
+   rendered ZERO in front matter (H-001 fired → system suppressed, but
+   the winning cluster rendered as body page 1 with a folio, leaving
+   copyright on a recto). The invariant is now structural: exactly ONE
+   title page, always in the front-matter §3 SLOT (recto pdf-page 3,
+   copyright verso pdf-page 4), never in the body. `convert()` ALWAYS
+   suppresses title_page-role blocks (traceability comment each);
+   `render_title_page_cluster()` builds the slot content from the
+   cluster, and `_system_title_page_latex()` arbitrates: H-001 fired →
+   cluster fills the slot (folio-free, ends `\clearpage`); not fired →
+   system page. render_local now imports the worker's builder instead
+   of mirroring it (the mirror drift was half this bug). Corpus: only
+   Hatch has H-001 fired.
 2. **Stale "CONTENTS" recto headers** between TOC and first chapter —
    `\tableofcontents` sets both marks and nothing cleared them. Both
    templates now emit `\markboth{}{}` right after
    `\mainmatter\pagestyle{prontobody}`; book title (verso) is the only
    header content until the first chapter marks.
 3. **Internal text leaked to customer output** — table/image stand-ins
-   said "[Table placeholder — see Doc 22 …]". Now `\textit{[Table]}` /
-   `\textit{[Illustration]}`; harness row 14 scans rendered text for
-   "Doc 22" / token-`CIR` / "placeholder" (any case).
+   said "[Table placeholder — see Doc 22 …]". Now `\textit{[Table
+   omitted from this edition]}` / `\textit{[Illustration omitted from
+   this edition]}`; harness row 14 scans rendered text for Doc-number
+   refs / token-`CIR` / "placeholder" (any case) / version strings.
 4. **End-of-book convention BOUND (§5b, harness row 11)** — even total
    page count by construction + ≥1 intentional trailing blank (no
    folio/header). We don't rely on KDP's auto-appended blank. Front
@@ -108,10 +117,14 @@ ratcheted into the harness (rows 11–14):
    parity under the counter reset, and body page 1 always lands recto);
    end matter ships one mandatory blank then a parity blank if needed.
 
-Harness ratchet: row 11 end-of-book; row 12 exactly-one-title-page
-(H-001-aware, tex + PDF evidence); row 13 boundary mark clear + no body
-page headed "Contents"; row 14 internal-phrase scan. Row 2 now branches
-on H-001 only (cluster presence no longer implies it renders).
+Harness ratchet: row 11 end-of-book (even count + trailing blank + last
+content != last page); row 12 title-page invariant (exactly one, AT the
+§3 slot position: title page pdf-3, copyright pdf-4, every cluster
+block suppressed in tex); row 13 boundary mark clear + no front-matter
+section name as a body-page header (each body-rendered front_matter
+section is allowed its own opener); row 14 internal-phrase scan. Row 2
+now branches on H-001 only (cluster presence no longer implies it
+renders).
 
 Confirmed NOT bugs (Jesse, same review): all-italic preface
 (source-faithful), "PRIDE. and PREJUDICE." period (source text), © year

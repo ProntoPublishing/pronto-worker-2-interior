@@ -63,24 +63,31 @@ WORKER_VERSION = "1.5.0"
 
 
 def _system_title_page_latex(artifact: Dict[str, Any]) -> str:
-    """Build the {{SYSTEM_TITLE_PAGE}} substitution.
+    """Build the {{SYSTEM_TITLE_PAGE}} substitution — the Interior
+    Standard §3 title-page SLOT (recto after half title + blank verso,
+    copyright on its verso). H-001 arbitration decides what fills it
+    (§6 review invariant, 2026-07-16: exactly ONE title page per book,
+    always in this slot, never as a body page):
 
-    When the artifact's applied_rules[] carries an H-001 entry, the
-    system-generated title page is suppressed (the author supplied
-    one, and the converter's title_page handler renders it). Otherwise
-    the standard system title page block is emitted, with
-    {{BOOK_TITLE}} / {{AUTHOR_NAME}} substituted by the next
-    template-fill step.
+    - H-001 fired → the author's classified title cluster renders HERE
+      (the system page is suppressed, and the converter suppresses the
+      cluster's body copies).
+    - H-001 not fired → the standard system title page block, with
+      {{BOOK_TITLE}} / {{AUTHOR_NAME}} substituted by the next
+      template-fill step.
     """
     h001_fired = any(
         r.get("rule") == "H-001"
         for r in (artifact.get("applied_rules") or [])
     )
     if h001_fired:
+        cluster = BlocksToLatexConverter().render_title_page_cluster(
+            (artifact.get("content") or {}).get("blocks") or []
+        )
         return (
             "% System title page suppressed by H-001\n"
-            "% (author supplied a title page; converter renders it from\n"
-            "% title_page-role blocks)."
+            "% (author supplied a title page; it renders in this slot).\n"
+            + cluster
         )
     # Interior Standard v1 §3.3 [BOUND]: title / (subtitle) / author,
     # "PRONTO PUBLISHING" imprint line at foot.
@@ -219,22 +226,15 @@ class InteriorProcessor:
             if decision.action == "FAIL":
                 raise ValueError(f"Cannot process: {decision.reason}")
             
-            # Step 7: Convert blocks to LaTeX.
-            # H-001 decides the title page in BOTH directions (§6 review
-            # finding, 2026-07-16): fired → author cluster renders and
-            # the template's system page is suppressed (Step 7b below);
-            # not fired → system page renders and the converter
-            # suppresses the classified source title cluster so it
-            # doesn't re-render as a second title page at body start.
-            h001_fired = any(
-                r.get("rule") == "H-001"
-                for r in (artifact.get("applied_rules") or [])
-            )
+            # Step 7: Convert blocks to LaTeX. Title-page invariant
+            # (§6 review, 2026-07-16): the converter never renders
+            # title_page-role blocks in the body — the winner of H-001
+            # arbitration renders in the template's front-matter slot
+            # (_system_title_page_latex below).
             latex_body = self.latex_converter.convert(
                 blocks=artifact['content']['blocks'],
                 params=params,
-                degraded_mode=(decision.action == "DEGRADE"),
-                suppress_title_page=not h001_fired,
+                degraded_mode=(decision.action == "DEGRADE")
             )
             
             # Remove placeholder line if present
@@ -258,12 +258,9 @@ class InteriorProcessor:
             requested_font = params.get("font", "Garamond")
             actual_font = font_map.get(requested_font, "EB Garamond")
             
-            # H-001 conditional: if the artifact's applied_rules[] carries
-            # an H-001 entry (Layer 5 author-supplied-title-page decision),
-            # the system-generated title page is suppressed and the
-            # author's title_page-role blocks render in its place via
-            # the converter. Otherwise the standard system title page
-            # block is substituted.
+            # Title-page slot: H-001 arbitration fills it with either the
+            # author's classified cluster or the standard system page —
+            # see _system_title_page_latex for the invariant.
             system_title_page = _system_title_page_latex(artifact)
 
             # Replace the body placeholder with count=1 explicitly. latex_body

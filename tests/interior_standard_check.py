@@ -245,76 +245,96 @@ def main() -> int:
     # Rows 11-14 — §6 review ratchet, 2026-07-16 (Jesse's eyeball pass).
     # ------------------------------------------------------------------
 
-    # Row 11 — end-of-book convention (Standard §5b [BOUND]): even total
-    # page count by construction, >= 1 intentional trailing blank, no
-    # folio/header on it (blank == zero extractable lines). We control
-    # our own output — the printer's auto-appended blank doesn't count.
+    # Row 11 — end-of-book convention (Standard §5b [BOUND]): total page
+    # count even by construction; >= 1 intentional trailing blank (no
+    # text, no folio, no header == zero extractable lines); the last
+    # CONTENT page is not the last document page. We control our own
+    # output — KDP's auto-injected blank is printer mercy, not design.
     even_total = len(pages) % 2 == 0
-    tail_blank = len(lines_of(len(pages) - 1)) == 0
+    last_content = max((i for i in range(len(pages)) if lines_of(i)), default=-1)
+    tail_blank = last_content < len(pages) - 1
+    final_blank = len(lines_of(len(pages) - 1)) == 0
     row(11, "end-of-book: even count + trailing blank",
-        OK if even_total and tail_blank else FAIL,
+        OK if even_total and tail_blank and final_blank else FAIL,
         f"pages={len(pages)} ({'even' if even_total else 'ODD'}), "
-        f"last page lines={len(lines_of(len(pages) - 1))}")
+        f"last content pdf-page {last_content + 1}, "
+        f"final page lines={len(lines_of(len(pages) - 1))}")
 
-    # Row 12 — exactly ONE title page in the document. H-001 fired →
-    # the author cluster renders (tex signature \vspace*{1in}) and the
-    # system \begin{titlepage} must be absent. Not fired → the system
-    # page renders and the cluster must be suppressed; additionally
-    # exactly one front-matter page carries the title outside the half
-    # title / copyright page.
-    cluster_sig = "\\vspace*{1in}"
-    system_sig = "\\begin{titlepage}"
-    has_cluster_blocks = any(b.get("role") == "title_page" for b in blocks)
-    if h001_fired:
-        ok12 = system_sig not in tex and (cluster_sig in tex or not has_cluster_blocks)
-        det12 = (f"H-001: system absent={system_sig not in tex}, "
-                 f"cluster rendered={cluster_sig in tex}")
-    else:
-        fa_idx = (first_arabic - 1) if first_arabic else len(pages)
-        # A real title page carries no folio (titlepage env is folio-
-        # free); folio'd front pages (TOC — whose rows can quote the
-        # book title) are not candidates.
-        cands = [
-            i + 1 for i in range(1, fa_idx)
-            if (ls := lines_of(i))
-            and norm(args.title) in norm(" ".join(ls))
-            and len(ls) <= 12
-            and not re.fullmatch(r"[ivxl]+|\d+", ls[-1].lower())
-            and norm("all rights reserved") not in norm(" ".join(ls))
-        ]
-        ok12 = (tex.count(system_sig) == 1 and cluster_sig not in tex
-                and len(cands) == 1)
-        det12 = (f"system pages(tex)={tex.count(system_sig)}, "
-                 f"cluster suppressed={cluster_sig not in tex}, "
-                 f"title-bearing front pages={cands}")
-    row(12, "exactly one title page", OK if ok12 else FAIL, det12)
+    # Row 12 — title-page invariant: exactly ONE title page, in the §3
+    # front-matter SLOT (recto pdf-page 3, after half title + blank
+    # verso, copyright on its verso at pdf-page 4), never as a body
+    # page. Structural side (tex): every title_page-role block is
+    # suppressed in the body (one traceability comment each); H-001
+    # fired → no system \begin{titlepage}; not fired → exactly one.
+    # Rendered side (PDF): a title page is a folio-free page bearing
+    # the title — there must be exactly one beyond the half title, at
+    # pdf-page 3.
+    n_tp_blocks = sum(1 for b in blocks if b.get("role") == "title_page")
+    n_suppressed = len(re.findall(r"% title_page block \S+ suppressed", tex))
+    system_pages = tex.count("\\begin{titlepage}")
+    tex_ok = (n_suppressed == n_tp_blocks
+              and (system_pages == 0 if h001_fired else system_pages == 1))
+    cands = [
+        i + 1 for i in range(1, len(pages))
+        if (ls := lines_of(i))
+        and norm(args.title) in norm(" ".join(ls))
+        and len(ls) <= 14
+        and not re.fullmatch(r"[ivxl]+|\d+", ls[-1].lower())
+        and norm("all rights reserved") not in norm(" ".join(ls))
+    ]
+    cp_page = next((i + 1 for i in range(len(pages))
+                    if norm("all rights reserved") in norm(" ".join(lines_of(i)))),
+                   None)
+    row(12, "one title page, in the s3 slot",
+        OK if tex_ok and cands == [3] and cp_page == 4 else FAIL,
+        f"title pages at {cands} (want [3]), copyright at {cp_page} (want 4), "
+        f"suppressed {n_suppressed}/{n_tp_blocks} blocks, "
+        f"system pages(tex)={system_pages} (h001={h001_fired})")
 
-    # Row 13 — running-header marks cleared at the front-matter→body
-    # boundary: the template must clear marks right after \mainmatter,
-    # and no BODY page (arabic folio) may carry the TOC's stale
-    # "Contents" mark as its header line.
+    # Row 13 — no front-matter section header text on arabic-folio
+    # pages: the template must clear marks right after \mainmatter, and
+    # no body page may carry a front-matter section name ("Contents",
+    # or any front_matter block heading) as its header line. A
+    # front_matter section that legitimately renders in the body is
+    # allowed its own opener page (first line == its heading) — once.
     boundary_clear = re.search(
         r"\\mainmatter\s*(?:%[^\n]*\n|\s)*\\pagestyle\{prontobody\}"
         r"\s*(?:%[^\n]*\n|\s)*\\markboth\{\}\{\}", tex)
-    stale = [
-        i + 1 for i in range(len(pages))
-        if (ls := lines_of(i))
-        and norm(ls[0]) == norm("Contents")
-        and re.fullmatch(r"\d+", ls[-1])
-    ]
-    row(13, "no stale marks before first chapter",
+    fm_names = {}  # normalized name -> allowed occurrences as a first line
+    fm_names[norm("Contents")] = 0  # system TOC: roman folios only
+    for b in blocks:
+        if b.get("role") == "front_matter" and \
+                (b.get("subtype") or "generic").lower() not in ("dedication", "copyright"):
+            t = norm(block_text(b))
+            # The book title is ALLOWED header content (verso headers
+            # carry it by design) — a source front_matter line that
+            # equals the title must not poison the leak set (Carol,
+            # Leaves, DQ all carry one).
+            if t and t != norm(args.title):
+                fm_names[t] = fm_names.get(t, 0) + 1  # its own opener
+    stale = []
+    for name, allowed in fm_names.items():
+        hits = [
+            i + 1 for i in range(len(pages))
+            if (ls := lines_of(i))
+            and norm(ls[0]) == name
+            and re.fullmatch(r"\d+", ls[-1])
+        ]
+        if len(hits) > allowed:
+            stale.append((name[:24], hits[allowed:]))
+    row(13, "no front-matter header text on body pages",
         OK if boundary_clear and not stale else FAIL,
-        f"boundary clear in tex={bool(boundary_clear)}, "
-        f"body pages headed 'Contents'={stale}")
+        f"boundary clear in tex={bool(boundary_clear)}, leaks={stale}")
 
     # Row 14 — internal phrases must never reach customer output:
-    # "Doc 22", "CIR" (as a token — 'circumstances' is fine), and the
-    # word "placeholder" in any casing.
+    # Doc-number references, "CIR" as a token ('circumstances' is
+    # fine), version strings, and the word "placeholder" in any casing.
     all_text = "\n".join(pages)
     leaks = [label for pat, label in (
-        (r"\bDoc\s*22\b", "Doc 22"),
+        (r"\bDoc\s*\d+\b", "Doc-number ref"),
         (r"\bCIR\b", "CIR"),
         (r"(?i)placeholder", "placeholder"),
+        (r"\bv\d+\.\d+(?:\.\d+)?\b", "version string"),
     ) if re.search(pat, all_text)]
     row(14, "no internal phrases in output",
         OK if not leaks else FAIL,

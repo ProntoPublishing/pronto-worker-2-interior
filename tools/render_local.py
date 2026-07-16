@@ -54,19 +54,11 @@ def main() -> int:
     print(f"artifact: schema {raw.get('schema_version')!r}, "
           f"{len(artifact['content']['blocks'])} blocks")
 
-    # H-001 decision drives both title-page sides (mirrors process_service):
-    # fired → author cluster renders, system page suppressed below;
-    # not fired → system page renders, converter suppresses the cluster.
-    h001_fired = any(
-        r.get("rule") == "H-001" for r in (artifact.get("applied_rules") or [])
-    )
-
     converter = BlocksToLatexConverter()
     body = converter.convert(
         blocks=artifact["content"]["blocks"],
         params={"genre": args.genre},
         degraded_mode=False,
-        suppress_title_page=not h001_fired,
     )
     body = body.replace("% PREAMBLE_PLACEHOLDER", "").lstrip()
 
@@ -81,21 +73,11 @@ def main() -> int:
             font_dir += "/"
         template = template.replace(DOCKER_FONT_PATH, font_dir)
 
-    # Mirror _system_title_page_latex(): no H-001 entry → system page.
-    system_title_page = (
-        "% System title page suppressed by H-001"
-        if h001_fired
-        else (
-            "\\begin{titlepage}\n"
-            "    \\centering\n"
-            "    \\vspace*{2in}\n"
-            "    {\\Huge\\textbf{{{BOOK_TITLE}}}}\\\\[1em]\n"
-            "    {\\Large {{AUTHOR_NAME}}}\n"
-            "    \\vfill\n"
-            "    {\\small\\textls[160]{\\scshape PRONTO PUBLISHING}}\\\\[0.4in]\n"
-            "\\end{titlepage}"
-        )
-    )
+    # Title-page slot: same arbitration as production — import the
+    # worker's builder rather than mirroring it (drift here produced
+    # the §6 duplicate/zero-title-page defects).
+    from pronto_worker_2 import _system_title_page_latex
+    system_title_page = _system_title_page_latex(artifact)
 
     # Interior Standard v1 §3.5 [BOUND]: TOC included when >= 2 entries.
     toc_entries = sum(

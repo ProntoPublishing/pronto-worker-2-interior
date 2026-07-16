@@ -1012,7 +1012,23 @@ class Test_V1ReaderH001Synthesis(unittest.TestCase):
         self.assertEqual(len(h001), 1)
 
 
-class Test_TitlePageHandlerRenders(unittest.TestCase):
+class Test_TitlePageClusterRendering(unittest.TestCase):
+    """§6 review rework (2026-07-16): title_page-role blocks never
+    render in the BODY (convert() emits suppression comments). The
+    styled rendering these tests pin lives in the front-matter slot
+    builder, render_title_page_cluster(), which the template-fill layer
+    uses when H-001 fired."""
+
+    def test_body_conversion_suppresses_title_page_blocks(self):
+        c = BlocksToLatexConverter()
+        block = {
+            "id": "b_000001", "type": "paragraph", "role": "title_page",
+            "spans": [{"text": "The Long Quiet", "marks": []}],
+            "classification_notes": ["title_page positional role: title"],
+        }
+        out = c.convert([block], params={})
+        self.assertNotIn("The Long Quiet", out)
+        self.assertIn("title_page block b_000001 suppressed", out)
 
     def test_title_block_renders_centered_huge_bold(self):
         c = BlocksToLatexConverter()
@@ -1021,7 +1037,7 @@ class Test_TitlePageHandlerRenders(unittest.TestCase):
             "spans": [{"text": "The Long Quiet", "marks": []}],
             "classification_notes": ["title_page positional role: title"],
         }
-        out = c.convert([block], params={})
+        out = c.render_title_page_cluster([block])
         self.assertIn("\\begin{center}", out)
         self.assertIn("\\Huge", out)
         self.assertIn("\\textbf{The Long Quiet}", out)
@@ -1033,7 +1049,7 @@ class Test_TitlePageHandlerRenders(unittest.TestCase):
             "spans": [{"text": "A Gentle Guide", "marks": []}],
             "classification_notes": ["title_page positional role: subtitle"],
         }
-        out = c.convert([block], params={})
+        out = c.render_title_page_cluster([block])
         self.assertIn("\\Large", out)
         self.assertIn("A Gentle Guide", out)
 
@@ -1044,21 +1060,21 @@ class Test_TitlePageHandlerRenders(unittest.TestCase):
             "spans": [{"text": "Test Author", "marks": []}],
             "classification_notes": ["title_page positional role: author_or_byline"],
         }
-        out = c.convert([block], params={})
+        out = c.render_title_page_cluster([block])
         self.assertIn("Test Author", out)
         self.assertIn("\\clearpage", out)
 
     def test_v1_title_block_without_positional_tag_renders_as_title(self):
         """v1 reader synthesizes title_page role on front_matter_title
         without populating classification_notes positional tags. The
-        handler defaults to title-rendering in that case.
+        slot builder defaults to title-rendering in that case.
         """
         c = BlocksToLatexConverter()
         block = {
             "id": "b_000001", "type": "paragraph", "role": "title_page",
             "spans": [{"text": "Some Book", "marks": []}],
         }
-        out = c.convert([block], params={})
+        out = c.render_title_page_cluster([block])
         self.assertIn("\\Huge", out)
         self.assertIn("Some Book", out)
 

@@ -51,10 +51,12 @@ class TestHeaderMarks(unittest.TestCase):
         self.assertEqual(mark, "Chapter II")
 
 
-class TestTitlePageCoordination(unittest.TestCase):
-    """§6 review fix (2026-07-16): exactly one title page per document.
-    When H-001 did NOT fire the template emits the system title page and
-    the converter must suppress the classified source title cluster."""
+class TestTitlePageInvariant(unittest.TestCase):
+    """§6 review invariant (2026-07-16): exactly one title page per
+    book, in the front-matter §3 slot, never in the body. The converter
+    ALWAYS suppresses title_page-role blocks in body output; the slot
+    is filled by render_title_page_cluster() (H-001 fired) or the
+    system page (not fired) at the template-fill layer."""
 
     CLUSTER = [
         {"id": "b1", "role": "title_page", "type": "paragraph",
@@ -65,38 +67,54 @@ class TestTitlePageCoordination(unittest.TestCase):
          "classification_notes": ["title_page positional role: author_or_byline"]},
     ]
 
-    def test_suppressed_when_system_page_selected(self):
-        out = conv().convert(self.CLUSTER, params={}, suppress_title_page=True)
+    def test_body_always_suppresses_title_page_blocks(self):
+        out = conv().convert(self.CLUSTER, params={})
         self.assertNotIn("Pride and Prejudice", out)
         self.assertNotIn("Jane Austen", out)
-        self.assertNotIn("\\vspace*{1in}", out)  # cluster title signature
-        self.assertIn("suppressed", out)  # traceability comments remain
+        # One traceability comment per suppressed block.
+        self.assertEqual(out.count("title_page block"), 2)
 
-    def test_renders_when_h001_fired(self):
-        out = conv().convert(self.CLUSTER, params={}, suppress_title_page=False)
+    def test_slot_builder_renders_cluster_in_order(self):
+        out = conv().render_title_page_cluster(self.CLUSTER)
         self.assertIn("Pride and Prejudice", out)
         self.assertIn("Jane Austen", out)
+        self.assertLess(out.index("Pride and Prejudice"), out.index("Jane Austen"))
+        # Folio-free recto that ends the page (copyright lands verso).
+        self.assertIn("\\thispagestyle{empty}", out)
+        self.assertTrue(out.rstrip().endswith("\\clearpage"))
+        # Title sized above the rest.
+        self.assertIn("\\Huge\\textbf{Pride and Prejudice}", out)
+        self.assertIn("{\\large Jane Austen}", out)
 
-    def test_default_is_render(self):
-        # Back-compat: callers not passing the flag keep old behavior.
-        out = conv().convert(self.CLUSTER, params={})
-        self.assertIn("Pride and Prejudice", out)
+    def test_slot_builder_ignores_non_cluster_blocks(self):
+        blocks = self.CLUSTER + [
+            {"id": "b3", "role": "body_paragraph", "type": "paragraph",
+             "spans": [{"text": "It is a truth universally acknowledged", "marks": []}]},
+        ]
+        out = conv().render_title_page_cluster(blocks)
+        self.assertNotIn("truth universally", out)
+
+    def test_slot_builder_empty_cluster_is_safe(self):
+        out = conv().render_title_page_cluster([])
+        self.assertNotIn("\\thispagestyle", out)
+        self.assertTrue(out.startswith("%"))
 
 
 class TestCustomerNeutralStandIns(unittest.TestCase):
     """§6 review fix (2026-07-16): no internal phrases in rendered
-    output — no doc references, never the word 'placeholder'."""
+    output — no doc references, no version strings, never the word
+    'placeholder'."""
 
     def test_table_stand_in_is_neutral(self):
         out = conv()._render_table({"id": "b1", "role": "table"}, {})
-        for phrase in ("Doc 22", "CIR", "placeholder"):
-            self.assertNotIn(phrase.lower(), out.lower())
-        self.assertIn("[Table]", out)
+        for phrase in ("doc 22", "cir", "placeholder", "v1.0"):
+            self.assertNotIn(phrase, out.lower())
+        self.assertIn("[Table omitted from this edition]", out)
 
     def test_image_stand_in_is_neutral(self):
         out = conv()._render_image({"id": "b1", "role": "image"}, {})
         self.assertNotIn("placeholder", out.lower())
-        self.assertIn("[Illustration]", out)
+        self.assertIn("[Illustration omitted from this edition]", out)
 
 
 class TestAsterismSceneBreaks(unittest.TestCase):
