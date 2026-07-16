@@ -52,7 +52,39 @@ class ProcessingDecision:
 
 class WarningHandler:
     """Evaluates warnings and decides processing strategy."""
-    
+
+    # Delivery-gating rules (Gate 2 ruling Q4, 2026-07-16). Separate
+    # axis from FAIL/DEGRADE/PROCEED: those control HOW the book is
+    # built; the review gate controls only the terminal Status. When a
+    # gating rule fires at severity >= medium, the build proceeds fully
+    # (artifact, PDF, R2 upload) but the service completes as "Review"
+    # instead of "Complete" — which keeps it out of the Ready-to-Deliver
+    # view (Status=Complete AND Delivered At empty), so Zap 5 never
+    # delivers it. Resume path is human-only: flip Review -> Complete
+    # and the record enters the view normally.
+    #
+    # V-006 (rules 1.2 pattern-only landmark promotion, training
+    # wheels) is pre-wired to route through the same gate per the same
+    # ruling. H-001 stays warn-only — test intakes always mismatch
+    # title/author (real-customer gating is a punchlisted future
+    # ruling).
+    REVIEW_GATE_RULES = {"V-005", "V-006"}
+    REVIEW_GATE_SEVERITIES = {"medium", "high", "critical"}
+
+    def requires_review(self, warnings: List[Dict[str, Any]]) -> Optional[str]:
+        """Return a human-readable reason when the finished book must
+        land in Status=Review instead of Complete; None otherwise."""
+        hits = []
+        for warning in warnings or []:
+            code = _warning_code(warning)
+            severity = (warning.get("severity") or "").lower()
+            if code in self.REVIEW_GATE_RULES and severity in self.REVIEW_GATE_SEVERITIES:
+                detail = (warning.get("detail") or "").strip()
+                hits.append(f"{code}: {detail[:160]}" if detail else code)
+        if hits:
+            return "; ".join(hits)
+        return None
+
     def __init__(self):
         """Initialize with processing policy rules."""
         # FAIL rules: Cannot process at all
