@@ -44,7 +44,9 @@ from uuid import uuid4
 from lib.pronto_r2_client import ProntoR2Client
 from lib.artifact_downloader import ArtifactDownloader
 from lib.artifact_readers import read_artifact, UnsupportedSchemaVersionError
-from lib.warning_handler import WarningHandler, ProcessingDecision
+from lib.warning_handler import (
+    WarningHandler, ProcessingDecision, title_cluster_page_break_warning,
+)
 from lib.blocks_to_latex import BlocksToLatexConverter
 from lib.pdf_generator import PDFGenerator
 from lib.pdf_validator import PDFValidator
@@ -59,7 +61,7 @@ logger = logging.getLogger(__name__)
 
 # Single source of truth for the deployed worker version.
 # Referenced by app.py's /health endpoint — bump only here.
-WORKER_VERSION = "1.6.1"
+WORKER_VERSION = "1.7.0"
 
 
 def _system_title_page_latex(artifact: Dict[str, Any]) -> str:
@@ -226,7 +228,19 @@ class InteriorProcessor:
             # Step 6: Check warnings and decide processing strategy.
             # v2.0 artifacts carry warnings at top level; v1 reader
             # promotes legacy analysis.warnings[] into the same shape.
-            warnings = artifact.get('warnings', [])
+            #
+            # V-007 (tripwire, 2026-07-16): W2 synthesizes one warning
+            # of its own — title cluster spanning a manual page break
+            # (Book 15 dedication absorption; W1 fires nothing for it).
+            # Appended to a COPY of the artifact's list so the gate and
+            # Operator Notes see it; the artifact itself is not mutated.
+            warnings = list(artifact.get('warnings', []))
+            v007 = title_cluster_page_break_warning(
+                artifact['content']['blocks']
+            )
+            if v007:
+                logger.warning(f"[{run_id}] W2 gate check: {v007['detail']}")
+                warnings.append(v007)
             decision = self.warning_handler.evaluate(warnings)
             
             logger.info(f"[{run_id}] Warning decision: {decision.action}")
