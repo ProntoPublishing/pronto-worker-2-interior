@@ -59,7 +59,7 @@ logger = logging.getLogger(__name__)
 
 # Single source of truth for the deployed worker version.
 # Referenced by app.py's /health endpoint — bump only here.
-WORKER_VERSION = "1.6.0"
+WORKER_VERSION = "1.6.1"
 
 
 def _system_title_page_latex(artifact: Dict[str, Any]) -> str:
@@ -99,7 +99,15 @@ def _system_title_page_latex(artifact: Dict[str, Any]) -> str:
         "    {\\Large {{AUTHOR_NAME}}}\n"
         "    \\vfill\n"
         "    {\\small\\textls[160]{\\scshape PRONTO PUBLISHING}}\\\\[0.4in]\n"
-        "\\end{titlepage}"
+        "\\end{titlepage}\n"
+        # Folio harmonization (punchlist item, test 20 parity review):
+        # \end{titlepage} resets the page counter to 1, so the system
+        # path numbered Contents at iii while the H-001 author-cluster
+        # path (a plain folio-free page, no reset) put it at v. Restore
+        # absolute front-matter numbering — this page is pdf-page 3 by
+        # construction (half title, blank verso, title slot), so the
+        # next page is 4. Both title-page paths now number identically.
+        "\\setcounter{page}{4}"
     )
 
 
