@@ -42,6 +42,62 @@ def _warning_code(warning: Dict[str, Any]) -> Optional[str]:
     return warning.get("rule") or warning.get("code")
 
 
+def title_cluster_page_break_warning(
+    blocks: List[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    """V-007 gate check (tripwire, 2026-07-16): synthesize a gating
+    warning when the C-003 title cluster's member blocks span a manual
+    page break in the source.
+
+    Book 15 evidence: C-003's cluster bounding is blind to manual page
+    breaks, so a dedication on its own page after the title page gets
+    absorbed as a subtitle member — manuscript_meta.subtitle becomes
+    "a novel For my sister, who stayed." and the dedication renders ON
+    the title page. W1 fires ZERO warnings for this, so V-005/V-006
+    never hold it and the mangled book ships as Complete. Until page-
+    break-aware cluster bounding lands in rules 1.3, this check makes
+    the Review gate see the condition. Cluster behavior itself is
+    untouched.
+
+    Unlike V-001..V-006 (W1 validators read from the artifact), V-007
+    is synthesized HERE from block evidence: W1 5.2.1-a1 records each
+    manual source page break as force_page_break: true on the first
+    content block after it (page-break runs mid-paragraph already emit
+    explicit page_break blocks). A break strictly inside the cluster
+    span — after the first title_page-role block, up to and including
+    the last — means the "title page" C-003 assembled crosses a page
+    boundary in the author's own layout: almost certainly an absorbed
+    dedication/epigraph/fleuron page. A break BEFORE the first member
+    (e.g. a cover page) or after the last is normal and does not fire.
+
+    Artifacts from W1 <= 5.2.0-a1 carry no break observations, so this
+    returns None for them — the gate fails open, matching pre-tripwire
+    behavior.
+    """
+    member_idxs = [
+        i for i, b in enumerate(blocks or [])
+        if b.get("role") == "title_page"
+    ]
+    if len(member_idxs) < 2:
+        return None
+    first, last = member_idxs[0], member_idxs[-1]
+    for i in range(first + 1, last + 1):
+        b = blocks[i]
+        if b.get("type") == "page_break" or b.get("force_page_break") is True:
+            return {
+                "rule": "V-007",
+                "severity": "medium",
+                "detail": (
+                    f"title cluster crosses a manual page break at block "
+                    f"{b.get('id')} ({len(member_idxs)} title_page blocks, "
+                    f"span {blocks[first].get('id')}..{blocks[last].get('id')}); "
+                    f"verify title page / subtitle before releasing"
+                ),
+                "blocks": [blocks[j].get("id") for j in member_idxs],
+            }
+    return None
+
+
 @dataclass
 class ProcessingDecision:
     """Decision on how to process manuscript based on warnings."""
@@ -68,7 +124,13 @@ class WarningHandler:
     # ruling. H-001 stays warn-only — test intakes always mismatch
     # title/author (real-customer gating is a punchlisted future
     # ruling).
-    REVIEW_GATE_RULES = {"V-005", "V-006"}
+    #
+    # V-007 (title cluster crosses a manual page break, 2026-07-16
+    # tripwire) is synthesized W2-side by
+    # title_cluster_page_break_warning() above — the worker appends it
+    # to the artifact's warnings before this gate runs. Holds until
+    # page-break-aware cluster bounding lands in W1 rules 1.3.
+    REVIEW_GATE_RULES = {"V-005", "V-006", "V-007"}
     REVIEW_GATE_SEVERITIES = {"medium", "high", "critical"}
 
     def requires_review(self, warnings: List[Dict[str, Any]]) -> Optional[str]:
