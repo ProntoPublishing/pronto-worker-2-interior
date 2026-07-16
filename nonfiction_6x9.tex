@@ -219,9 +219,24 @@ First edition, {{YEAR}}
 % Table of contents — Standard §3.5 [BOUND]: conditional (>= 2 entries).
 {{TOC_BLOCK}}
 
+% Front matter ends EVEN — Interior Standard v1 §5b accounting:
+% \mainmatter resets the page counter, so the end-of-book parity check
+% (see END OF BOOK below) sees body pages only. An even front matter
+% makes total parity equal body parity, and puts body page 1 on a
+% recto under openany.
+\clearpage
+\ifodd\value{page}\else\thispagestyle{empty}\null\clearpage\fi
+
 % Main matter
 \mainmatter
 \pagestyle{prontobody}
+% Clear running-header marks carried over from the front matter:
+% \tableofcontents sets both marks to CONTENTS, and without this clear
+% every recto between the TOC and the first chapter's own \markright
+% shows a stale "CONTENTS" header (§6 review finding, 2026-07-16).
+% Until the first chapter sets its mark, the book title (verso) is the
+% only running-header content.
+\markboth{}{}
 
 % ============================================================================
 % CONTENT PLACEHOLDER
@@ -240,5 +255,20 @@ First edition, {{YEAR}}
 % reference the template content placeholder literally in comments: a
 % stray literal here would be substituted with the full body during
 % template fill, rendering the book twice.
+
+% ============================================================================
+% END OF BOOK — Interior Standard v1 §5b [BOUND]
+% ============================================================================
+
+% The book ends with at least one INTENTIONAL trailing blank page (no
+% folio, no header) and an even total page count by construction. We
+% control our own output — never rely on the printer's auto-appended
+% blank. With the front matter forced even above, body-page parity
+% (\value{page} after \mainmatter's reset) equals total parity: after
+% the mandatory blank ships, an even counter means an odd total, so one
+% more blank ships.
+\clearpage
+\thispagestyle{empty}\null\clearpage
+\ifodd\value{page}\else\thispagestyle{empty}\null\clearpage\fi
 
 \end{document}

@@ -99,7 +99,11 @@ def main() -> int:
         if norm(args.title) in joined and norm(args.author) in joined:
             tp = i
             break
-    if h001_fired or blocks and any(b.get("role") == "title_page" for b in blocks):
+    # Branch on H-001 ONLY (§6 ratchet, 2026-07-16): title_page-role
+    # blocks may exist on any book (C-003 classifies the source title
+    # cluster), but they RENDER only when H-001 fired — otherwise the
+    # converter suppresses them and the system page is the title page.
+    if h001_fired:
         # author-supplied title page renders from blocks; strings may
         # legitimately differ from intake — check presence of title only.
         tp_ok = any(norm(args.title) in norm(" ".join(lines_of(i)))
@@ -236,6 +240,85 @@ def main() -> int:
     row(10, "content preservation (40-paragraph sample)",
         OK if not missing else FAIL,
         f"{len(sample) - len(missing)}/{len(sample)} found; missing {missing[:5]}")
+
+    # ------------------------------------------------------------------
+    # Rows 11-14 — §6 review ratchet, 2026-07-16 (Jesse's eyeball pass).
+    # ------------------------------------------------------------------
+
+    # Row 11 — end-of-book convention (Standard §5b [BOUND]): even total
+    # page count by construction, >= 1 intentional trailing blank, no
+    # folio/header on it (blank == zero extractable lines). We control
+    # our own output — the printer's auto-appended blank doesn't count.
+    even_total = len(pages) % 2 == 0
+    tail_blank = len(lines_of(len(pages) - 1)) == 0
+    row(11, "end-of-book: even count + trailing blank",
+        OK if even_total and tail_blank else FAIL,
+        f"pages={len(pages)} ({'even' if even_total else 'ODD'}), "
+        f"last page lines={len(lines_of(len(pages) - 1))}")
+
+    # Row 12 — exactly ONE title page in the document. H-001 fired →
+    # the author cluster renders (tex signature \vspace*{1in}) and the
+    # system \begin{titlepage} must be absent. Not fired → the system
+    # page renders and the cluster must be suppressed; additionally
+    # exactly one front-matter page carries the title outside the half
+    # title / copyright page.
+    cluster_sig = "\\vspace*{1in}"
+    system_sig = "\\begin{titlepage}"
+    has_cluster_blocks = any(b.get("role") == "title_page" for b in blocks)
+    if h001_fired:
+        ok12 = system_sig not in tex and (cluster_sig in tex or not has_cluster_blocks)
+        det12 = (f"H-001: system absent={system_sig not in tex}, "
+                 f"cluster rendered={cluster_sig in tex}")
+    else:
+        fa_idx = (first_arabic - 1) if first_arabic else len(pages)
+        # A real title page carries no folio (titlepage env is folio-
+        # free); folio'd front pages (TOC — whose rows can quote the
+        # book title) are not candidates.
+        cands = [
+            i + 1 for i in range(1, fa_idx)
+            if (ls := lines_of(i))
+            and norm(args.title) in norm(" ".join(ls))
+            and len(ls) <= 12
+            and not re.fullmatch(r"[ivxl]+|\d+", ls[-1].lower())
+            and norm("all rights reserved") not in norm(" ".join(ls))
+        ]
+        ok12 = (tex.count(system_sig) == 1 and cluster_sig not in tex
+                and len(cands) == 1)
+        det12 = (f"system pages(tex)={tex.count(system_sig)}, "
+                 f"cluster suppressed={cluster_sig not in tex}, "
+                 f"title-bearing front pages={cands}")
+    row(12, "exactly one title page", OK if ok12 else FAIL, det12)
+
+    # Row 13 — running-header marks cleared at the front-matter→body
+    # boundary: the template must clear marks right after \mainmatter,
+    # and no BODY page (arabic folio) may carry the TOC's stale
+    # "Contents" mark as its header line.
+    boundary_clear = re.search(
+        r"\\mainmatter\s*(?:%[^\n]*\n|\s)*\\pagestyle\{prontobody\}"
+        r"\s*(?:%[^\n]*\n|\s)*\\markboth\{\}\{\}", tex)
+    stale = [
+        i + 1 for i in range(len(pages))
+        if (ls := lines_of(i))
+        and norm(ls[0]) == norm("Contents")
+        and re.fullmatch(r"\d+", ls[-1])
+    ]
+    row(13, "no stale marks before first chapter",
+        OK if boundary_clear and not stale else FAIL,
+        f"boundary clear in tex={bool(boundary_clear)}, "
+        f"body pages headed 'Contents'={stale}")
+
+    # Row 14 — internal phrases must never reach customer output:
+    # "Doc 22", "CIR" (as a token — 'circumstances' is fine), and the
+    # word "placeholder" in any casing.
+    all_text = "\n".join(pages)
+    leaks = [label for pat, label in (
+        (r"\bDoc\s*22\b", "Doc 22"),
+        (r"\bCIR\b", "CIR"),
+        (r"(?i)placeholder", "placeholder"),
+    ) if re.search(pat, all_text)]
+    row(14, "no internal phrases in output",
+        OK if not leaks else FAIL,
+        f"leaks={leaks}" if leaks else "clean")
 
     width = max(len(r[1]) for r in rows)
     failed = 0

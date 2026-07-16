@@ -128,11 +128,17 @@ class BlocksToLatexConverter:
         blocks: List[Dict[str, Any]],
         params: Dict[str, Any],
         degraded_mode: bool = False,
+        suppress_title_page: bool = False,
     ) -> str:
         """Convert v2.0 blocks to LaTeX body content.
 
         Returns a string suitable for substituting into the {{CONTENT}}
         placeholder in fiction_6x9.tex / nonfiction_6x9.tex.
+
+        suppress_title_page: pass True when H-001 did NOT fire (the
+        template emits the system title page). The classified source
+        title cluster must then not re-render as a second styled title
+        page at body start — exactly one title page per document.
         """
         logger.info(
             f"Converting {len(blocks)} v2 blocks to LaTeX "
@@ -180,7 +186,11 @@ class BlocksToLatexConverter:
                     out.append("")
                 continue
             handler = getattr(self, handler_name)
-            ctx = {"degraded": degraded_mode, "params": params}
+            ctx = {
+                "degraded": degraded_mode,
+                "params": params,
+                "suppress_title_page": suppress_title_page,
+            }
             latex = handler(block, ctx)
             if latex:
                 out.append(latex)
@@ -284,12 +294,20 @@ class BlocksToLatexConverter:
         subsequent blocks (subtitle, byline) progressively smaller.
         Falls back to a single sizing if the positional tag is absent.
 
-        The decision of whether the system title page from the template
-        is suppressed in favor of these blocks lives at the template-fill
-        layer (pronto_worker_2.py reads applied_rules[] for an H-001
-        entry). This handler only renders the author cluster; it does
-        not coordinate with the system title page.
+        H-001 coordination (both directions — §6 review finding, 2026-07-16):
+        the template-fill layer (pronto_worker_2.py, applied_rules[] H-001
+        entry) decides which title page wins. H-001 fired → system page
+        suppressed there, this handler renders the author cluster. H-001
+        did NOT fire → system page renders, and THIS side suppresses the
+        classified cluster (ctx["suppress_title_page"]) so the source
+        title lines don't re-render as a second styled title page at
+        body start. Exactly one title page per document.
         """
+        if ctx.get("suppress_title_page"):
+            return (
+                f"% title_page block {block.get('id')} suppressed "
+                f"(system title page selected; H-001 did not fire)"
+            )
         text = self._render_spans(block)
         if not text:
             return ""
@@ -645,24 +663,27 @@ class BlocksToLatexConverter:
         return f"\\begin{{quotation}}\n{body}\n\\end{{quotation}}"
 
     def _render_table(self, block: Dict[str, Any], ctx: Dict[str, Any]) -> str:
-        """v1.3 placeholder. Doc 22 v1.0.2 defers table-internal
-        structure to the schema; once schema firms up rows/cells, this
-        handler renders to tabular. For now, emit a visible placeholder
-        so operators see where tables would land.
+        """Table-internal structure is deferred to a future schema rev;
+        once rows/cells firm up, this handler renders to tabular. Until
+        then, emit a visible stand-in marking where the table lands.
+        CUSTOMER-FACING TEXT (§6 review, 2026-07-16): must stay neutral —
+        no internal doc/spec references, and never the word
+        "placeholder" (harness row 14 scans rendered output for all
+        three).
         """
         return (
             "\\begin{center}\n"
-            "[Table placeholder — see Doc 22 v1.0.2 §CIR Block Structure]\n"
+            "\\textit{[Table]}\n"
             "\\end{center}"
         )
 
     def _render_image(self, block: Dict[str, Any], ctx: Dict[str, Any]) -> str:
-        """v1.3 placeholder. Image extraction is a Layer 5 concern in
-        Doc 22; for now, emit a visible placeholder.
+        """Image extraction is deferred (v1.2 punchlist); emit a visible
+        stand-in. Same customer-neutral wording rule as _render_table.
         """
         return (
             "\\begin{center}\n"
-            "[Image placeholder]\n"
+            "\\textit{[Illustration]}\n"
             "\\end{center}"
         )
 

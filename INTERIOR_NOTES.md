@@ -79,3 +79,41 @@ checked row** — no bad-rendering deltas to flag. Highlights of the bind:
 
 Trim coverage: only the two 6×9 templates exist; the Standard's 5×8,
 5.5×8.5, and 8.5×11 rows bind when those templates are authored (punchlist).
+
+## §6 review micro-iteration (2026-07-16, Jesse's eyeball pass)
+
+Three defects found by eyeball + one new bound convention; all fixed and
+ratcheted into the harness (rows 11–14):
+
+1. **Duplicate title page** — H-001 coordination was one-directional:
+   fired → system page suppressed, but NOT fired → the C-003-classified
+   source title cluster still re-rendered as a styled title page at body
+   start, after the system page. Now `convert(...,
+   suppress_title_page=not h001_fired)` suppresses the cluster when the
+   system page wins (worker + render_local both pass it). Corpus: only
+   Hatch has H-001 fired; the other five all carried the duplicate.
+2. **Stale "CONTENTS" recto headers** between TOC and first chapter —
+   `\tableofcontents` sets both marks and nothing cleared them. Both
+   templates now emit `\markboth{}{}` right after
+   `\mainmatter\pagestyle{prontobody}`; book title (verso) is the only
+   header content until the first chapter marks.
+3. **Internal text leaked to customer output** — table/image stand-ins
+   said "[Table placeholder — see Doc 22 …]". Now `\textit{[Table]}` /
+   `\textit{[Illustration]}`; harness row 14 scans rendered text for
+   "Doc 22" / token-`CIR` / "placeholder" (any case).
+4. **End-of-book convention BOUND (§5b, harness row 11)** — even total
+   page count by construction + ≥1 intentional trailing blank (no
+   folio/header). We don't rely on KDP's auto-appended blank. Front
+   matter is forced even before `\mainmatter` (so body parity == total
+   parity under the counter reset, and body page 1 always lands recto);
+   end matter ships one mandatory blank then a parity blank if needed.
+
+Harness ratchet: row 11 end-of-book; row 12 exactly-one-title-page
+(H-001-aware, tex + PDF evidence); row 13 boundary mark clear + no body
+page headed "Contents"; row 14 internal-phrase scan. Row 2 now branches
+on H-001 only (cluster presence no longer implies it renders).
+
+Confirmed NOT bugs (Jesse, same review): all-italic preface
+(source-faithful), "PRIDE. and PREJUDICE." period (source text), © year
+from intake. Known-deferred: plate captions / [Copyright 1894] scatter
+(v1.2 images), N-005 license tail (punchlist).

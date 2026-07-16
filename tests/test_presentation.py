@@ -51,6 +51,54 @@ class TestHeaderMarks(unittest.TestCase):
         self.assertEqual(mark, "Chapter II")
 
 
+class TestTitlePageCoordination(unittest.TestCase):
+    """§6 review fix (2026-07-16): exactly one title page per document.
+    When H-001 did NOT fire the template emits the system title page and
+    the converter must suppress the classified source title cluster."""
+
+    CLUSTER = [
+        {"id": "b1", "role": "title_page", "type": "paragraph",
+         "spans": [{"text": "Pride and Prejudice", "marks": []}],
+         "classification_notes": ["title_page positional role: title"]},
+        {"id": "b2", "role": "title_page", "type": "paragraph",
+         "spans": [{"text": "Jane Austen", "marks": []}],
+         "classification_notes": ["title_page positional role: author_or_byline"]},
+    ]
+
+    def test_suppressed_when_system_page_selected(self):
+        out = conv().convert(self.CLUSTER, params={}, suppress_title_page=True)
+        self.assertNotIn("Pride and Prejudice", out)
+        self.assertNotIn("Jane Austen", out)
+        self.assertNotIn("\\vspace*{1in}", out)  # cluster title signature
+        self.assertIn("suppressed", out)  # traceability comments remain
+
+    def test_renders_when_h001_fired(self):
+        out = conv().convert(self.CLUSTER, params={}, suppress_title_page=False)
+        self.assertIn("Pride and Prejudice", out)
+        self.assertIn("Jane Austen", out)
+
+    def test_default_is_render(self):
+        # Back-compat: callers not passing the flag keep old behavior.
+        out = conv().convert(self.CLUSTER, params={})
+        self.assertIn("Pride and Prejudice", out)
+
+
+class TestCustomerNeutralStandIns(unittest.TestCase):
+    """§6 review fix (2026-07-16): no internal phrases in rendered
+    output — no doc references, never the word 'placeholder'."""
+
+    def test_table_stand_in_is_neutral(self):
+        out = conv()._render_table({"id": "b1", "role": "table"}, {})
+        for phrase in ("Doc 22", "CIR", "placeholder"):
+            self.assertNotIn(phrase.lower(), out.lower())
+        self.assertIn("[Table]", out)
+
+    def test_image_stand_in_is_neutral(self):
+        out = conv()._render_image({"id": "b1", "role": "image"}, {})
+        self.assertNotIn("placeholder", out.lower())
+        self.assertIn("[Illustration]", out)
+
+
 class TestAsterismSceneBreaks(unittest.TestCase):
     POSITIVES = ["* * *", "***", "~", "• • •", "—", "* * * * *", "###"]
     NEGATIVES = [

@@ -54,11 +54,19 @@ def main() -> int:
     print(f"artifact: schema {raw.get('schema_version')!r}, "
           f"{len(artifact['content']['blocks'])} blocks")
 
+    # H-001 decision drives both title-page sides (mirrors process_service):
+    # fired → author cluster renders, system page suppressed below;
+    # not fired → system page renders, converter suppresses the cluster.
+    h001_fired = any(
+        r.get("rule") == "H-001" for r in (artifact.get("applied_rules") or [])
+    )
+
     converter = BlocksToLatexConverter()
     body = converter.convert(
         blocks=artifact["content"]["blocks"],
         params={"genre": args.genre},
         degraded_mode=False,
+        suppress_title_page=not h001_fired,
     )
     body = body.replace("% PREAMBLE_PLACEHOLDER", "").lstrip()
 
@@ -74,9 +82,6 @@ def main() -> int:
         template = template.replace(DOCKER_FONT_PATH, font_dir)
 
     # Mirror _system_title_page_latex(): no H-001 entry → system page.
-    h001_fired = any(
-        r.get("rule") == "H-001" for r in (artifact.get("applied_rules") or [])
-    )
     system_title_page = (
         "% System title page suppressed by H-001"
         if h001_fired

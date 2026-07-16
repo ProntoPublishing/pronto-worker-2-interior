@@ -59,7 +59,7 @@ logger = logging.getLogger(__name__)
 
 # Single source of truth for the deployed worker version.
 # Referenced by app.py's /health endpoint — bump only here.
-WORKER_VERSION = "1.4.0"
+WORKER_VERSION = "1.5.0"
 
 
 def _system_title_page_latex(artifact: Dict[str, Any]) -> str:
@@ -219,11 +219,22 @@ class InteriorProcessor:
             if decision.action == "FAIL":
                 raise ValueError(f"Cannot process: {decision.reason}")
             
-            # Step 7: Convert blocks to LaTeX
+            # Step 7: Convert blocks to LaTeX.
+            # H-001 decides the title page in BOTH directions (§6 review
+            # finding, 2026-07-16): fired → author cluster renders and
+            # the template's system page is suppressed (Step 7b below);
+            # not fired → system page renders and the converter
+            # suppresses the classified source title cluster so it
+            # doesn't re-render as a second title page at body start.
+            h001_fired = any(
+                r.get("rule") == "H-001"
+                for r in (artifact.get("applied_rules") or [])
+            )
             latex_body = self.latex_converter.convert(
                 blocks=artifact['content']['blocks'],
                 params=params,
-                degraded_mode=(decision.action == "DEGRADE")
+                degraded_mode=(decision.action == "DEGRADE"),
+                suppress_title_page=not h001_fired,
             )
             
             # Remove placeholder line if present
