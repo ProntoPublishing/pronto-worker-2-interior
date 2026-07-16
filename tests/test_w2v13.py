@@ -460,6 +460,85 @@ class Test_ConverterChapterHeading(unittest.TestCase):
         self.assertIn("\\addcontentsline{toc}{chapter}{Prologue}", out)
 
 
+class Test_Schema21Prerequisite(unittest.TestCase):
+    """Amendment spec §5: schema-2.1 acceptance, chapter_subtitle handler,
+    and the fail-safe default for unknown roles.
+    """
+
+    def setUp(self):
+        self.c = BlocksToLatexConverter()
+
+    def _block(self, role, text, **extra):
+        b = {"id": "b_000001", "type": "paragraph", "role": role,
+             "spans": [{"text": text, "marks": []}]}
+        b.update(extra)
+        return b
+
+    # -- §5.1 dispatcher accepts 2.1, still fail-loud on unknown ----------
+
+    def test_dispatcher_accepts_2_1(self):
+        art = _minimal_v2_artifact([
+            self._block("body_paragraph", "Hello."),
+        ])
+        art["schema_version"] = "2.1"
+        out = read_artifact(art)
+        self.assertEqual(out["schema_version"], "2.1")
+
+    def test_dispatcher_still_rejects_future_versions(self):
+        art = _minimal_v2_artifact([
+            self._block("body_paragraph", "Hello."),
+        ])
+        art["schema_version"] = "3.0"
+        with self.assertRaises(UnsupportedSchemaVersionError):
+            read_artifact(art)
+
+    # -- §5.2 chapter_subtitle handler -------------------------------------
+
+    def test_chapter_subtitle_renders_italic_centered(self):
+        blocks = [
+            {"id": "b_000001", "type": "heading", "heading_level": 2,
+             "role": "chapter_heading", "chapter_number": "ONE",
+             "chapter_title": "Chapter ONE"},
+            self._block("chapter_subtitle", "MARLEY'S GHOST."),
+        ]
+        out = self.c.convert(blocks, params={})
+        self.assertIn("\\itshape MARLEY'S GHOST.", out)
+        self.assertIn("\\begin{center}", out)
+
+    def test_chapter_subtitle_collapses_internal_newlines(self):
+        out = self.c.convert(
+            [self._block("chapter_subtitle", "Line one\n\nLine two")], params={}
+        )
+        self.assertNotIn("\n\nLine", out.split("\\itshape ", 1)[-1].split("\n")[0])
+        self.assertIn("Line one Line two", out)
+
+    # -- §5.3 fail-safe default: unknown role's text SURVIVES --------------
+
+    def test_unknown_role_text_survives_to_output(self):
+        """The bug class this kills: converter used to emit only a
+        LaTeX comment for unknown roles — silent content loss. Now the
+        text must appear in the body output.
+        """
+        blocks = [self._block("some_future_role", "This text must not vanish.")]
+        out = self.c.convert(blocks, params={})
+        self.assertIn("This text must not vanish.", out)
+        self.assertIn("% WARNING: unknown role some_future_role", out)
+
+    def test_unknown_role_logs_loudly(self):
+        import logging as _logging
+        blocks = [self._block("mystery_role", "Content.")]
+        with self.assertLogs("lib.blocks_to_latex", level=_logging.ERROR) as cm:
+            self.c.convert(blocks, params={})
+        self.assertTrue(any("UNKNOWN ROLE" in m for m in cm.output))
+
+    def test_unknown_role_preserves_marks(self):
+        blocks = [{"id": "b_000001", "type": "paragraph",
+                   "role": "some_future_role",
+                   "spans": [{"text": "kept", "marks": ["italic"]}]}]
+        out = self.c.convert(blocks, params={})
+        self.assertIn("\\textit{kept}", out)
+
+
 class Test_ConverterChapterOrdinal(unittest.TestCase):
     """Book 02 (P&P) fix 1: the printed ordinal must come from the
     artifact's chapter_number, never LaTeX's own chapter counter. The
@@ -504,7 +583,9 @@ class Test_ConverterChapterOrdinal(unittest.TestCase):
         the source's numbering style (roman stays roman).
         """
         out = self.c.convert([self._block("IV", "Chapter IV")], params={})
-        self.assertIn("\\chapter*{Chapter IV}", out)
+        # Interior Standard v1 s4: label-shaped titles wear \prontolabel
+        # (spaced small caps); TOC entry stays plain.
+        self.assertIn("\\chapter*{\\prontolabel{Chapter IV}}", out)
         self.assertNotIn("\\setcounter", out)
 
     def test_unrepresentable_number_falls_back_to_star(self):
@@ -550,8 +631,11 @@ class Test_ConverterMultiLineChapterTitle(unittest.TestCase):
         self.assertIn("I hope Mr. Bingley will like it.", out)
         # No raw newlines inside any sectioning argument.
         self.assertNotIn("\\chapter*{I hope", out)
-        # Heading appears exactly once.
-        self.assertEqual(out.count("CHAPTER II."), 2)  # heading + TOC line
+        # Heading appears exactly once in the BODY; the other two
+        # occurrences are plumbing (TOC contentsline + running-header
+        # \markright, presentation layer).
+        self.assertEqual(out.count("CHAPTER II."), 3)
+        self.assertIn("\\markright{CHAPTER II.}", out)
 
     def test_toc_line_uses_chapter_line_only(self):
         out = self._out("“On the way.” \n\nCHAPTER XL.")
@@ -641,7 +725,9 @@ class Test_ConverterFrontBackMatter(unittest.TestCase):
         }
         out = self.c.convert([block], params={})
         self.assertIn("\\chapter*{A Note Before You Begin}", out)
-        self.assertIn("\\addcontentsline{toc}{chapter}{A Note Before You Begin}", out)
+        # Interior Standard v1 s3.5: front matter is NOT listed in the
+        # TOC (back matter keeps its entries — see the next test).
+        self.assertNotIn("\\addcontentsline", out)
 
     def test_back_matter_renders_chapter_star_with_toc(self):
         block = {
@@ -926,7 +1012,23 @@ class Test_V1ReaderH001Synthesis(unittest.TestCase):
         self.assertEqual(len(h001), 1)
 
 
-class Test_TitlePageHandlerRenders(unittest.TestCase):
+class Test_TitlePageClusterRendering(unittest.TestCase):
+    """§6 review rework (2026-07-16): title_page-role blocks never
+    render in the BODY (convert() emits suppression comments). The
+    styled rendering these tests pin lives in the front-matter slot
+    builder, render_title_page_cluster(), which the template-fill layer
+    uses when H-001 fired."""
+
+    def test_body_conversion_suppresses_title_page_blocks(self):
+        c = BlocksToLatexConverter()
+        block = {
+            "id": "b_000001", "type": "paragraph", "role": "title_page",
+            "spans": [{"text": "The Long Quiet", "marks": []}],
+            "classification_notes": ["title_page positional role: title"],
+        }
+        out = c.convert([block], params={})
+        self.assertNotIn("The Long Quiet", out)
+        self.assertIn("title_page block b_000001 suppressed", out)
 
     def test_title_block_renders_centered_huge_bold(self):
         c = BlocksToLatexConverter()
@@ -935,7 +1037,7 @@ class Test_TitlePageHandlerRenders(unittest.TestCase):
             "spans": [{"text": "The Long Quiet", "marks": []}],
             "classification_notes": ["title_page positional role: title"],
         }
-        out = c.convert([block], params={})
+        out = c.render_title_page_cluster([block])
         self.assertIn("\\begin{center}", out)
         self.assertIn("\\Huge", out)
         self.assertIn("\\textbf{The Long Quiet}", out)
@@ -947,7 +1049,7 @@ class Test_TitlePageHandlerRenders(unittest.TestCase):
             "spans": [{"text": "A Gentle Guide", "marks": []}],
             "classification_notes": ["title_page positional role: subtitle"],
         }
-        out = c.convert([block], params={})
+        out = c.render_title_page_cluster([block])
         self.assertIn("\\Large", out)
         self.assertIn("A Gentle Guide", out)
 
@@ -958,21 +1060,21 @@ class Test_TitlePageHandlerRenders(unittest.TestCase):
             "spans": [{"text": "Test Author", "marks": []}],
             "classification_notes": ["title_page positional role: author_or_byline"],
         }
-        out = c.convert([block], params={})
+        out = c.render_title_page_cluster([block])
         self.assertIn("Test Author", out)
         self.assertIn("\\clearpage", out)
 
     def test_v1_title_block_without_positional_tag_renders_as_title(self):
         """v1 reader synthesizes title_page role on front_matter_title
         without populating classification_notes positional tags. The
-        handler defaults to title-rendering in that case.
+        slot builder defaults to title-rendering in that case.
         """
         c = BlocksToLatexConverter()
         block = {
             "id": "b_000001", "type": "paragraph", "role": "title_page",
             "spans": [{"text": "Some Book", "marks": []}],
         }
-        out = c.convert([block], params={})
+        out = c.render_title_page_cluster([block])
         self.assertIn("\\Huge", out)
         self.assertIn("Some Book", out)
 

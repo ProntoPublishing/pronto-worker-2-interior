@@ -73,22 +73,20 @@ def main() -> int:
             font_dir += "/"
         template = template.replace(DOCKER_FONT_PATH, font_dir)
 
-    # Mirror _system_title_page_latex(): no H-001 entry → system page.
-    h001_fired = any(
-        r.get("rule") == "H-001" for r in (artifact.get("applied_rules") or [])
+    # Title-page slot: same arbitration as production — import the
+    # worker's builder rather than mirroring it (drift here produced
+    # the §6 duplicate/zero-title-page defects).
+    from pronto_worker_2 import _system_title_page_latex
+    system_title_page = _system_title_page_latex(artifact)
+
+    # Interior Standard v1 §3.5 [BOUND]: TOC included when >= 2 entries.
+    toc_entries = sum(
+        1 for b in artifact["content"]["blocks"]
+        if b.get("role") in ("chapter_heading", "part_divider", "back_matter")
     )
-    system_title_page = (
-        "% System title page suppressed by H-001"
-        if h001_fired
-        else (
-            "\\begin{titlepage}\n"
-            "    \\centering\n"
-            "    \\vspace*{2in}\n"
-            "    {\\Huge\\textbf{{{BOOK_TITLE}}}}\\\\[1em]\n"
-            "    {\\Large {{AUTHOR_NAME}}}\n"
-            "    \\vfill\n"
-            "\\end{titlepage}"
-        )
+    toc_block = (
+        "\\tableofcontents\n\\clearpage" if toc_entries >= 2
+        else f"% TOC omitted: {toc_entries} entry(ies) < 2 (Standard s3.5)"
     )
 
     latex_content = (
@@ -100,6 +98,11 @@ def main() -> int:
         .replace("{{FONT_NAME}}", "EB Garamond")
         .replace("{{YEAR}}", args.year)
         .replace("{{ISBN}}", args.isbn)
+        .replace(
+            "{{ISBN_LINE}}",
+            f"\\\\[1em]\nISBN: {args.isbn}" if args.isbn else "",
+        )
+        .replace("{{TOC_BLOCK}}", toc_block, 1)
     )
 
     args.out_dir.mkdir(parents=True, exist_ok=True)

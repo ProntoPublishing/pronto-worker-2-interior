@@ -3,7 +3,8 @@
 % Author: Pronto Publishing
 % Version: 1.0.0
 
-\documentclass[12pt,openany]{book}
+% Interior Standard v1 (2026-07-15): 11pt body [BOUND s2]; openany [BOUND s4].
+\documentclass[11pt,openany]{book}
 
 % ============================================================================
 % PACKAGES
@@ -28,12 +29,12 @@
     paperwidth=6in,
     paperheight=9in,
     top=0.75in,
-    bottom=0.75in,
-    inner=0.875in,
-    outer=0.625in,
+    bottom=0.85in,
+    inner=0.85in,
+    outer=0.65in,
     headheight=14pt,
     headsep=0.25in,
-    footskip=0.25in
+    footskip=0.3in
 }
 
 % ============================================================================
@@ -56,57 +57,79 @@
 % TYPOGRAPHY
 % ============================================================================
 
-% Line spacing: 1.15 for non-fiction (tighter than fiction)
-\setstretch{1.15}
+% Interior Standard v1 s2 [BOUND]: 11pt / 14.5pt leading for 6x9
+% (14.5/13.6 = 1.066). Fiction/nonfiction share the bound body spec.
+\setstretch{1.066}
 
 % Paragraph formatting
-\setlength{\parindent}{0.25in}
+\setlength{\parindent}{1em}  % Standard s2 [BOUND]
 \setlength{\parskip}{0pt}
 
-% Widow and orphan control
+% ---- H&J configuration (Interior Standard v1 draft defaults) ----
+% Values live in this one block so the Standard can re-bind them.
+
+% Widow and orphan control: hard forbid.
 \widowpenalty=10000
 \clubpenalty=10000
+% A page break right after a hyphenated line reads badly.
+\brokenpenalty=5000
 
-% Hyphenation
+% Hyphenation: discourage but allow; forbid ladders.
 \hyphenpenalty=1000
 \exhyphenpenalty=1000
+\doublehyphendemerits=10000
+\finalhyphendemerits=5000
+
+% Justification escape valve (see fiction template note).
+\emergencystretch=1.5em
+
+% Vertical policy: ragged bottom (see fiction template note).
+\raggedbottom
 
 % ============================================================================
 % HEADERS AND FOOTERS
 % ============================================================================
 
-\pagestyle{fancy}
-\fancyhf{}  % Clear all headers and footers
+% Body pagestyle — self-contained named style; see fiction template
+% for the fancyhdr plain-redefinition leak this design defends against
+% (the root cause of headerless production interiors).
+%
+% Running headers (Interior Standard v1 draft convention):
+% verso = book title, recto = current chapter title.
+\fancypagestyle{prontobody}{%
+  \fancyhf{}%
+  \fancyhead[LE]{\small\scshape {{BOOK_TITLE}}}%
+  \fancyhead[RO]{\small\scshape\rightmark}%
+  \fancyfoot[C]{\thepage}%  % Standard s5 [BOUND]: bottom center
+  \renewcommand{\headrulewidth}{0pt}%
+}
 
-% Header: Chapter title (left) and Section title (right)
-\fancyhead[LE]{\small\itshape\leftmark}
-\fancyhead[RO]{\small\itshape\rightmark}
-
-% Footer: Page number (outside)
-\fancyfoot[LE,RO]{\thepage}
-
-% Plain style for chapter pages
+% Plain style for chapter openers and front matter (folio only)
 \fancypagestyle{plain}{
     \fancyhf{}
-    \fancyfoot[LE,RO]{\thepage}
+    \fancyfoot[C]{\thepage}
     \renewcommand{\headrulewidth}{0pt}
 }
 
-% Remove header rule
-\renewcommand{\headrulewidth}{0pt}
+\renewcommand{\chaptermark}[1]{\markright{#1}}
+\pagestyle{prontobody}
 
 % ============================================================================
 % CHAPTER FORMATTING
 % ============================================================================
 
-% Chapter title formatting (more structured for non-fiction)
-\titleformat{\chapter}[display]
-    {\normalfont\huge\bfseries}
-    {\chaptertitlename\ \thechapter}
-    {20pt}
-    {\Huge}
+% Chapter opener — Standard §4 [BOUND]: spaced-small-caps label, title
+% beneath in display size. Sink ~1/3 page [TUNE]. Nonfiction keeps its
+% bold title weight (a [TUNE] genre distinction; label style is BOUND).
+\newcommand{\prontolabel}[1]{\textls[120]{\scshape #1}}
 
-\titlespacing*{\chapter}{0pt}{50pt}{40pt}
+\titleformat{\chapter}[display]
+    {\normalfont\centering}
+    {\Large\prontolabel{\chaptertitlename\ \thechapter}}
+    {1em}
+    {\Large\bfseries}
+
+\titlespacing*{\chapter}{0pt}{0.24\textheight}{40pt}
 
 % Section formatting
 \titleformat{\section}
@@ -127,17 +150,27 @@
 
 \renewcommand{\contentsname}{Contents}
 \setlength{\cftbeforechapskip}{8pt}
+% Standard §3.5 [BOUND]: chapter rows get dot leaders; part rows bold,
+% no leader.
+\renewcommand{\cftchapleader}{\cftdotfill{\cftdotsep}}
+\renewcommand{\cftpartfont}{\bfseries}
+\renewcommand{\cftpartleader}{\hfill}
+\renewcommand{\cftpartpagefont}{\bfseries}
 
 % ============================================================================
 % CUSTOM COMMANDS
 % ============================================================================
 
-% Scene break (less common in non-fiction, but included)
+% Scene break — Standard §4 [BOUND]: centered asterism, blank line
+% above/below; following paragraph flush (§2 [BOUND]).
+\makeatletter
 \newcommand{\scenebreak}{%
     \par\vspace{\baselineskip}%
-    \centerline{* * *}%
-    \par\vspace{\baselineskip}%
+    {\centering * * *\par}%
+    \vspace{\baselineskip}%
+    \@afterindentfalse\@afterheading
 }
+\makeatother
 
 % ============================================================================
 % DOCUMENT
@@ -149,37 +182,61 @@
 \frontmatter
 \pagestyle{plain}
 
-% Title page is H-001-conditional. pronto_worker_2.py fills the
-% placeholder on the next line: when H-001 fired (author supplied a
-% title page; system one suppressed) the placeholder becomes a
-% suppression comment. Otherwise it becomes the standard system
-% title page block, with the book title and author name substituted
-% in the next template-fill step. Do NOT reference the placeholder
-% literal in this comment — Python's str.replace() substitutes every
-% occurrence and the multi-line replacement breaks out of '%' at its
-% first newline. count=1 in the worker is the defense; this comment
-% wording is the second layer.
+% Half title (bare book title, recto, no folio)
+\thispagestyle{empty}
+\vspace*{0.28\textheight}
+\begin{center}
+{\Large {{BOOK_TITLE}}}
+\end{center}
+\clearpage
+% Half-title verso intentionally blank
+\thispagestyle{empty}\null\clearpage
+
+% Title-page SLOT (Interior Standard §3: recto here, copyright on the
+% verso behind it). pronto_worker_2.py fills the placeholder on the
+% next line with the H-001 arbitration winner: fired → the author's
+% classified title cluster (folio-free, ends with \clearpage); not
+% fired → the standard system title page block. Exactly ONE title page
+% per book, always in this slot, never in the body. Do NOT reference
+% the placeholder literal in this comment — Python's str.replace()
+% substitutes every occurrence and the multi-line replacement breaks
+% out of '%' at its first newline. count=1 in the worker is the
+% defense; this comment wording is the second layer.
 {{SYSTEM_TITLE_PAGE}}
 
-% Copyright page
+% Copyright page — Standard §3.4 [BOUND] template text.
 \thispagestyle{empty}
 \vspace*{\fill}
 \begin{flushleft}
 \small
-Copyright \textcopyright\ {{YEAR}} by {{AUTHOR_NAME}}\\[1em]
-All rights reserved. No part of this book may be reproduced in any form or by any electronic or mechanical means, including information storage and retrieval systems, without permission in writing from the publisher, except by a reviewer who may quote brief passages in a review.\\[1em]
-First Edition\\[1em]
-ISBN: {{ISBN}}
+Copyright \textcopyright\ {{YEAR}} {{AUTHOR_NAME}}. All rights reserved.{{ISBN_LINE}}\\[1em]
+Interior design and typesetting by Pronto Publishing\\
+prontopublishing.com\\[1em]
+First edition, {{YEAR}}
 \end{flushleft}
 \clearpage
 
-% Table of contents
-\tableofcontents
+% Table of contents — Standard §3.5 [BOUND]: conditional (>= 2 entries).
+{{TOC_BLOCK}}
+
+% Front matter ends EVEN — Interior Standard v1 §5b accounting:
+% \mainmatter resets the page counter, so the end-of-book parity check
+% (see END OF BOOK below) sees body pages only. An even front matter
+% makes total parity equal body parity, and puts body page 1 on a
+% recto under openany.
 \clearpage
+\ifodd\value{page}\else\thispagestyle{empty}\null\clearpage\fi
 
 % Main matter
 \mainmatter
-\pagestyle{fancy}
+\pagestyle{prontobody}
+% Clear running-header marks carried over from the front matter:
+% \tableofcontents sets both marks to CONTENTS, and without this clear
+% every recto between the TOC and the first chapter's own \markright
+% shows a stale "CONTENTS" header (§6 review finding, 2026-07-16).
+% Until the first chapter sets its mark, the book title (verso) is the
+% only running-header content.
+\markboth{}{}
 
 % ============================================================================
 % CONTENT PLACEHOLDER
@@ -198,5 +255,20 @@ ISBN: {{ISBN}}
 % reference the template content placeholder literally in comments: a
 % stray literal here would be substituted with the full body during
 % template fill, rendering the book twice.
+
+% ============================================================================
+% END OF BOOK — Interior Standard v1 §5b [BOUND]
+% ============================================================================
+
+% The book ends with at least one INTENTIONAL trailing blank page (no
+% folio, no header) and an even total page count by construction. We
+% control our own output — never rely on the printer's auto-appended
+% blank. With the front matter forced even above, body-page parity
+% (\value{page} after \mainmatter's reset) equals total parity: after
+% the mandatory blank ships, an even counter means an odd total, so one
+% more blank ships.
+\clearpage
+\thispagestyle{empty}\null\clearpage
+\ifodd\value{page}\else\thispagestyle{empty}\null\clearpage\fi
 
 \end{document}

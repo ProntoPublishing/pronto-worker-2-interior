@@ -40,12 +40,15 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 
-# Canonical Layer 2 role enum from Doc 22 v1.0.2.
+# Canonical Layer 2 role enum from Doc 22 v1.0.2, plus the v2.1 schema
+# addition (chapter_subtitle, amendment spec §2.3 — a title paired to the
+# landmark above it: Carol's stave names, Hatch's italic chapter subtitles).
 ROLES = frozenset({
     "title_page",
     "front_matter",
     "part_divider",
     "chapter_heading",
+    "chapter_subtitle",
     "body_paragraph",
     "scene_break",
     "back_matter",
@@ -74,6 +77,7 @@ class BlocksToLatexConverter:
         "front_matter":    "_render_front_matter",
         "part_divider":    "_render_part_divider",
         "chapter_heading": "_render_chapter_heading",
+        "chapter_subtitle": "_render_chapter_subtitle",
         "body_paragraph":  "_render_body_paragraph",
         "scene_break":     "_render_scene_break",
         "back_matter":     "_render_back_matter",
@@ -129,6 +133,12 @@ class BlocksToLatexConverter:
 
         Returns a string suitable for substituting into the {{CONTENT}}
         placeholder in fiction_6x9.tex / nonfiction_6x9.tex.
+
+        Title-page invariant (§6 review, 2026-07-16): title_page-role
+        blocks NEVER render here — the body is the wrong position for a
+        title page. They render (when H-001 chose them) in the template's
+        front-matter §3 slot via render_title_page_cluster(); this
+        method emits traceability comments in their place.
         """
         logger.info(
             f"Converting {len(blocks)} v2 blocks to LaTeX "
@@ -158,9 +168,22 @@ class BlocksToLatexConverter:
 
             handler_name = self.HANDLER_MAP.get(role)
             if handler_name is None:
-                # __init__ guarantees this can't happen, but defensive.
-                logger.error(f"No handler for role {role!r}")
-                out.append(f"% ERROR: no handler for role {role}")
+                # FAIL-SAFE DEFAULT (amendment spec §5.3). A role this
+                # converter doesn't know — a future schema addition —
+                # must never cost the reader content. Render the block's
+                # text as a plain body paragraph and log loudly. The
+                # worst case becomes a formatting deficiency, not silent
+                # content loss.
+                logger.error(
+                    f"UNKNOWN ROLE {role!r} on block {block.get('id')} — "
+                    f"no handler; rendering as plain body text (fail-safe "
+                    f"default). A W2 update for this role is overdue."
+                )
+                fallback = self._render_spans(block)
+                out.append(f"% WARNING: unknown role {role} rendered as body text")
+                if fallback:
+                    out.append(fallback)
+                    out.append("")
                 continue
             handler = getattr(self, handler_name)
             ctx = {"degraded": degraded_mode, "params": params}
@@ -260,54 +283,62 @@ class BlocksToLatexConverter:
     # -- Role handlers ------------------------------------------------------
 
     def _render_title_page(self, block: Dict[str, Any], ctx: Dict[str, Any]) -> str:
-        """Render an author-supplied title-page cluster member.
-
-        Each cluster block is centered. The first one (positional role
-        "title" per C-003's classification_notes) is rendered larger;
-        subsequent blocks (subtitle, byline) progressively smaller.
-        Falls back to a single sizing if the positional tag is absent.
-
-        The decision of whether the system title page from the template
-        is suppressed in favor of these blocks lives at the template-fill
-        layer (pronto_worker_2.py reads applied_rules[] for an H-001
-        entry). This handler only renders the author cluster; it does
-        not coordinate with the system title page.
+        """title_page-role blocks NEVER render in the body (§6 review
+        invariant, 2026-07-16): exactly one title page per book, in the
+        front-matter §3 position. H-001 arbitration decides what fills
+        the template's title-page slot — fired → this cluster, rendered
+        there via render_title_page_cluster(); not fired → the system
+        page. Either way the body copy is suppressed; this comment is
+        the traceability marker.
         """
-        text = self._render_spans(block)
-        if not text:
-            return ""
-
-        # Positional sub-role from classification_notes; absent on v1
-        # synthesized title_page blocks.
-        notes = block.get("classification_notes") or []
-        positional = ""
-        for n in notes:
-            if "positional role:" in n:
-                positional = n.split(":", 1)[-1].strip().lower()
-                break
-
-        if positional == "title" or not positional:
-            # Title (or unknown — assume primary).
-            return (
-                "\\begin{center}\n"
-                "\\vspace*{1in}\n"
-                f"{{\\Huge\\textbf{{{text}}}}}\n"
-                "\\end{center}\n"
-                "\\vspace{1em}"
-            )
-        if positional == "subtitle":
-            return (
-                "\\begin{center}\n"
-                f"{{\\Large {text}}}\n"
-                "\\end{center}\n"
-                "\\vspace{1em}"
-            )
-        # author_or_byline / anything else.
         return (
+            f"% title_page block {block.get('id')} suppressed in body "
+            f"(renders in the front-matter slot iff H-001 chose it)"
+        )
+
+    @staticmethod
+    def _positional_of(block: Dict[str, Any]) -> str:
+        """Positional sub-role ("title" / "subtitle" / "author_or_byline")
+        from C-003's classification_notes; "" when absent (v1
+        synthesized title_page blocks)."""
+        for n in (block.get("classification_notes") or []):
+            if "positional role:" in n:
+                return n.split(":", 1)[-1].strip().lower()
+        return ""
+
+    def render_title_page_cluster(self, blocks: List[Dict[str, Any]]) -> str:
+        """LaTeX for the front-matter §3 title-page SLOT, built from the
+        author's classified title_page cluster (call only when H-001
+        fired). One folio-free recto: title \\Huge, subtitle \\Large,
+        byline/anything-else \\large, in document order; ends with
+        \\clearpage so the copyright page lands on the verso behind it,
+        exactly like the system title page it replaces.
+        """
+        lines: List[str] = []
+        for block in blocks:
+            if block.get("role") != "title_page":
+                continue
+            text = self._render_spans(block)
+            if not text:
+                continue
+            positional = self._positional_of(block)
+            if positional == "title" or not positional:
+                lines.append(f"{{\\Huge\\textbf{{{text}}}}}\\par\\vspace{{1.5em}}")
+            elif positional == "subtitle":
+                lines.append(f"{{\\Large {text}}}\\par\\vspace{{1em}}")
+            else:  # author_or_byline / unknown positional
+                lines.append(f"{{\\large {text}}}\\par\\vspace{{1em}}")
+        if not lines:
+            # Defensive: slot caller checked H-001, but the cluster is
+            # empty — emit nothing rather than a blank styled page.
+            return "% H-001 fired but title_page cluster is empty"
+        return (
+            "\\thispagestyle{empty}\n"
             "\\begin{center}\n"
-            f"{{\\large {text}}}\n"
-            "\\end{center}\n"
+            "\\vspace*{1in}\n"
+            + "\n".join(lines) + "\n"
             "\\vfill\n"
+            "\\end{center}\n"
             "\\clearpage"
         )
 
@@ -340,10 +371,10 @@ class BlocksToLatexConverter:
                 "\\clearpage"
             )
         # generic / preface / foreword / introduction / note_to_reader / etc.
-        return (
-            f"\\chapter*{{{text_body}}}\n"
-            f"\\addcontentsline{{toc}}{{chapter}}{{{text_body}}}"
-        )
+        # Interior Standard v1 §3.5 [BOUND]: front-matter items are NOT
+        # listed in the TOC — no \addcontentsline here (back matter
+        # keeps its entries).
+        return f"\\chapter*{{{text_body}}}"
 
     def _render_part_divider(self, block: Dict[str, Any], ctx: Dict[str, Any]) -> str:
         """Part divider. Per I-5 always carries force_page_break: true.
@@ -353,12 +384,72 @@ class BlocksToLatexConverter:
         title = self._escape(block.get("part_title") or "")
         force_break = block.get("force_page_break", True)
         prefix = "\\clearpage\n" if force_break else ""
-        return f"{prefix}\\part*{{{title}}}\n\\addcontentsline{{toc}}{{part}}{{{title}}}"
+        # Clear the running-header chapter mark: pages between a part
+        # divider and its first chapter must not show the previous
+        # chapter's title.
+        return (
+            f"{prefix}\\part*{{{title}}}\n"
+            f"\\addcontentsline{{toc}}{{part}}{{{title}}}\n"
+            f"\\markright{{}}"
+        )
 
     # Matches the line inside a multi-line chapter_title that carries the
     # chapter designation. Deliberately a bare prefix (no \b): corpus
     # sources produce fused headings like "CHAPTERXXVII." (Book 02).
     _CHAPTER_LINE_RE = re.compile(r"^chapter", re.IGNORECASE)
+
+    # Label-shaped title detection (schema 2.1 / rules 1.1 coordination):
+    # W1 v1.1 emits chapter_number as an INTEGER ("the integer is
+    # metadata") and synthesizes titles like "Letter IV" / "Stave ONE" /
+    # "Chapter XXVII" from the source's section word + display ordinal.
+    # A title that is nothing but such a label must render ONCE (the
+    # \chapter* path), preserving the source's word and ordinal style —
+    # otherwise the template prints its own "CHAPTER n" above it and
+    # every heading doubles (Frankenstein letters rendered "CHAPTER 1 /
+    # LETTER I"). Lexicon mirrors W1's landmarks.py — shared-library
+    # consolidation punchlist item, same as the roman parser.
+    _LABEL_RE = re.compile(
+        r"^(?:chapter|chap\.?|stave|letter|canto|section|act|scene|lesson"
+        r"|part|book|volume|vol\.?)\s*(?P<ordinal>[\w\-]+?)[.:]?$",
+        re.IGNORECASE,
+    )
+
+    _WORD_ORDINALS = {
+        **{w: i for i, w in enumerate(
+            ("ONE", "TWO", "THREE", "FOUR", "FIVE", "SIX", "SEVEN",
+             "EIGHT", "NINE"), 1)},
+        **{w: i for i, w in enumerate(
+            ("TEN", "ELEVEN", "TWELVE", "THIRTEEN", "FOURTEEN", "FIFTEEN",
+             "SIXTEEN", "SEVENTEEN", "EIGHTEEN", "NINETEEN"), 10)},
+        "TWENTY": 20, "THIRTY": 30, "FORTY": 40, "FIFTY": 50,
+        "SIXTY": 60, "SEVENTY": 70, "EIGHTY": 80, "NINETY": 90,
+    }
+
+    def _title_is_label(self, head: str, number_int: Optional[int]) -> bool:
+        """True when the chapter_title is just the heading label itself
+        (section word + the same ordinal chapter_number carries)."""
+        if number_int is None:
+            return False
+        m = self._LABEL_RE.match(head.strip())
+        if not m:
+            return False
+        tok = m.group("ordinal")
+        value = self._chapter_number_as_int(tok)
+        if value is None:
+            value = self._word_ordinal_to_int(tok)
+        return value == number_int
+
+    def _word_ordinal_to_int(self, token: str) -> Optional[int]:
+        s = re.sub(r"[\s\-]+", " ", token.strip().upper())
+        if s in self._WORD_ORDINALS:
+            return self._WORD_ORDINALS[s]
+        parts = s.split(" ")
+        if (len(parts) == 2 and parts[0] in self._WORD_ORDINALS
+                and parts[1] in self._WORD_ORDINALS
+                and self._WORD_ORDINALS[parts[0]] % 10 == 0
+                and self._WORD_ORDINALS[parts[1]] < 10):
+            return self._WORD_ORDINALS[parts[0]] + self._WORD_ORDINALS[parts[1]]
+        return None
 
     def _render_chapter_heading(self, block: Dict[str, Any], ctx: Dict[str, Any]) -> str:
         """v2 chapter heading: chapter_number + chapter_title are
@@ -417,12 +508,12 @@ class BlocksToLatexConverter:
                 "\\end{center}"
             )
 
+        number_int = self._chapter_number_as_int(chapter_number)
         synthesized = (
             chapter_number is not None
             and head.rstrip(".").strip().lower()
             == f"chapter {chapter_number}".lower()
-        )
-        number_int = self._chapter_number_as_int(chapter_number)
+        ) or self._title_is_label(head, number_int)
 
         if chapter_number is not None and not synthesized and number_int is not None:
             heading = (
@@ -438,11 +529,32 @@ class BlocksToLatexConverter:
                     f"{chapter_number!r} not representable as an integer; "
                     f"rendering unnumbered"
                 )
+            # Interior Standard v1 §4 [BOUND]: label lines in spaced
+            # small caps. Only label-shaped/synthesized titles get the
+            # \prontolabel wrap (real titles are display text); the TOC
+            # entry and header mark stay plain.
+            display = f"\\prontolabel{{{title}}}" if synthesized else title
             heading = (
-                f"\\chapter*{{{title}}}\n"
+                f"\\chapter*{{{display}}}\n"
                 f"\\addcontentsline{{toc}}{{chapter}}{{{title}}}"
             )
-        return heading + extra_latex
+        # Running-header mark (recto = chapter title). Emitted explicitly
+        # for BOTH paths: \chapter* never sets a mark, and for numbered
+        # chapters an explicit \markright with the truncated title wins
+        # over the \chaptermark default — headers get a bounded string
+        # even when the source title is a DQ-length sentence.
+        mark = self._escape(self._truncate_for_header(head))
+        return heading + f"\n\\markright{{{mark}}}" + extra_latex
+
+    _HEADER_MARK_MAX = 58
+
+    @classmethod
+    def _truncate_for_header(cls, text: str) -> str:
+        t = " ".join(text.split())
+        if len(t) <= cls._HEADER_MARK_MAX:
+            return t
+        cut = t[:cls._HEADER_MARK_MAX].rsplit(" ", 1)[0].rstrip(",;:")
+        return cut + "…"
 
     @staticmethod
     def _chapter_number_as_int(number: Any) -> Optional[int]:
@@ -473,7 +585,38 @@ class BlocksToLatexConverter:
             return total if total > 0 else None
         return None
 
+    def _render_chapter_subtitle(self, block: Dict[str, Any], ctx: Dict[str, Any]) -> str:
+        """v2.1 role: a title paired to the landmark above it (stave
+        names, chapter subtitles). Italic centered line beneath the
+        heading — full styling deferred per amendment spec §5.2.
+        """
+        text = self._plain(block)
+        if not text:
+            return ""
+        return (
+            "\\begin{center}\n"
+            f"\\itshape {text}\n"
+            "\\end{center}"
+        )
+
+    # Ornament-only paragraphs are scene breaks in the wild: authors
+    # (and Gutenberg conversions) type "* * *", "***", "~", "• • •" or
+    # a short dash run instead of a styled break. W1 carries them
+    # faithfully as body_paragraph; the presentation layer normalizes
+    # them to the template's \scenebreak asterism. (Interior Standard
+    # v1 draft; when W1 grows a scene_break classifier this detector
+    # becomes redundant but harmless.)
+    _ASTERISM_RE = re.compile(r"^[\s*·•~–—#_-]{1,16}$")
+
     def _render_body_paragraph(self, block: Dict[str, Any], ctx: Dict[str, Any]) -> str:
+        raw = "".join(
+            s.get("text", "") for s in (block.get("spans") or [])
+        )
+        stripped = raw.strip()
+        if stripped and self._ASTERISM_RE.match(stripped) and any(
+            ch in "*·•~–—#_-" for ch in stripped
+        ):
+            return "\\scenebreak"
         return self._render_spans(block)
 
     def _render_scene_break(self, block: Dict[str, Any], ctx: Dict[str, Any]) -> str:
@@ -516,24 +659,27 @@ class BlocksToLatexConverter:
         return f"\\begin{{quotation}}\n{body}\n\\end{{quotation}}"
 
     def _render_table(self, block: Dict[str, Any], ctx: Dict[str, Any]) -> str:
-        """v1.3 placeholder. Doc 22 v1.0.2 defers table-internal
-        structure to the schema; once schema firms up rows/cells, this
-        handler renders to tabular. For now, emit a visible placeholder
-        so operators see where tables would land.
+        """Table-internal structure is deferred to a future schema rev;
+        once rows/cells firm up, this handler renders to tabular. Until
+        then, emit a visible stand-in marking where the table lands.
+        CUSTOMER-FACING TEXT (§6 review, 2026-07-16): must stay neutral —
+        no internal doc/spec references, and never the word
+        "placeholder" (harness row 14 scans rendered output for all
+        three).
         """
         return (
             "\\begin{center}\n"
-            "[Table placeholder — see Doc 22 v1.0.2 §CIR Block Structure]\n"
+            "\\textit{[Table omitted from this edition]}\n"
             "\\end{center}"
         )
 
     def _render_image(self, block: Dict[str, Any], ctx: Dict[str, Any]) -> str:
-        """v1.3 placeholder. Image extraction is a Layer 5 concern in
-        Doc 22; for now, emit a visible placeholder.
+        """Image extraction is deferred (v1.2 punchlist); emit a visible
+        stand-in. Same customer-neutral wording rule as _render_table.
         """
         return (
             "\\begin{center}\n"
-            "[Image placeholder]\n"
+            "\\textit{[Illustration omitted from this edition]}\n"
             "\\end{center}"
         )
 

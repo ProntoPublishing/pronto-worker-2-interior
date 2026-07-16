@@ -31,7 +31,7 @@ REQUIRED_TOP_LEVEL = (
 def read(artifact: Dict[str, Any]) -> Dict[str, Any]:
     """Defensive copy + minimal shape check for a v2.0 artifact."""
     sv = artifact.get("schema_version")
-    if sv != "2.0":
+    if sv not in ("2.0", "2.1"):
         raise ValueError(f"v2 reader called on schema_version={sv!r}")
 
     missing = [k for k in REQUIRED_TOP_LEVEL if k not in artifact]

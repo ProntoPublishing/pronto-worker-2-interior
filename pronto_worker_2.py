@@ -59,29 +59,38 @@ logger = logging.getLogger(__name__)
 
 # Single source of truth for the deployed worker version.
 # Referenced by app.py's /health endpoint — bump only here.
-WORKER_VERSION = "1.3.1"
+WORKER_VERSION = "1.5.0"
 
 
 def _system_title_page_latex(artifact: Dict[str, Any]) -> str:
-    """Build the {{SYSTEM_TITLE_PAGE}} substitution.
+    """Build the {{SYSTEM_TITLE_PAGE}} substitution — the Interior
+    Standard §3 title-page SLOT (recto after half title + blank verso,
+    copyright on its verso). H-001 arbitration decides what fills it
+    (§6 review invariant, 2026-07-16: exactly ONE title page per book,
+    always in this slot, never as a body page):
 
-    When the artifact's applied_rules[] carries an H-001 entry, the
-    system-generated title page is suppressed (the author supplied
-    one, and the converter's title_page handler renders it). Otherwise
-    the standard system title page block is emitted, with
-    {{BOOK_TITLE}} / {{AUTHOR_NAME}} substituted by the next
-    template-fill step.
+    - H-001 fired → the author's classified title cluster renders HERE
+      (the system page is suppressed, and the converter suppresses the
+      cluster's body copies).
+    - H-001 not fired → the standard system title page block, with
+      {{BOOK_TITLE}} / {{AUTHOR_NAME}} substituted by the next
+      template-fill step.
     """
     h001_fired = any(
         r.get("rule") == "H-001"
         for r in (artifact.get("applied_rules") or [])
     )
     if h001_fired:
+        cluster = BlocksToLatexConverter().render_title_page_cluster(
+            (artifact.get("content") or {}).get("blocks") or []
+        )
         return (
             "% System title page suppressed by H-001\n"
-            "% (author supplied a title page; converter renders it from\n"
-            "% title_page-role blocks)."
+            "% (author supplied a title page; it renders in this slot).\n"
+            + cluster
         )
+    # Interior Standard v1 §3.3 [BOUND]: title / (subtitle) / author,
+    # "PRONTO PUBLISHING" imprint line at foot.
     return (
         "\\begin{titlepage}\n"
         "    \\centering\n"
@@ -89,8 +98,23 @@ def _system_title_page_latex(artifact: Dict[str, Any]) -> str:
         "    {\\Huge\\textbf{{{BOOK_TITLE}}}}\\\\[1em]\n"
         "    {\\Large {{AUTHOR_NAME}}}\n"
         "    \\vfill\n"
+        "    {\\small\\textls[160]{\\scshape PRONTO PUBLISHING}}\\\\[0.4in]\n"
         "\\end{titlepage}"
     )
+
+
+def _toc_block_latex(blocks) -> str:
+    """{{TOC_BLOCK}} substitution — Interior Standard v1 §3.5 [BOUND]:
+    a TOC is included when the artifact yields >= 2 TOC entries
+    (chapter_heading + part_divider + back_matter; front matter is
+    never listed per §3.5)."""
+    entries = sum(
+        1 for b in blocks
+        if b.get("role") in ("chapter_heading", "part_divider", "back_matter")
+    )
+    if entries >= 2:
+        return "\\tableofcontents\n\\clearpage"
+    return f"% TOC omitted: {entries} entry(ies) < 2 (Interior Standard v1 s3.5)"
 
 
 class InteriorProcessor:
@@ -202,7 +226,11 @@ class InteriorProcessor:
             if decision.action == "FAIL":
                 raise ValueError(f"Cannot process: {decision.reason}")
             
-            # Step 7: Convert blocks to LaTeX
+            # Step 7: Convert blocks to LaTeX. Title-page invariant
+            # (§6 review, 2026-07-16): the converter never renders
+            # title_page-role blocks in the body — the winner of H-001
+            # arbitration renders in the template's front-matter slot
+            # (_system_title_page_latex below).
             latex_body = self.latex_converter.convert(
                 blocks=artifact['content']['blocks'],
                 params=params,
@@ -230,12 +258,9 @@ class InteriorProcessor:
             requested_font = params.get("font", "Garamond")
             actual_font = font_map.get(requested_font, "EB Garamond")
             
-            # H-001 conditional: if the artifact's applied_rules[] carries
-            # an H-001 entry (Layer 5 author-supplied-title-page decision),
-            # the system-generated title page is suppressed and the
-            # author's title_page-role blocks render in its place via
-            # the converter. Otherwise the standard system title page
-            # block is substituted.
+            # Title-page slot: H-001 arbitration fills it with either the
+            # author's classified cluster or the standard system page —
+            # see _system_title_page_latex for the invariant.
             system_title_page = _system_title_page_latex(artifact)
 
             # Replace the body placeholder with count=1 explicitly. latex_body
@@ -256,6 +281,17 @@ class InteriorProcessor:
                 .replace("{{FONT_NAME}}", actual_font)
                 .replace("{{YEAR}}", now_year)
                 .replace("{{ISBN}}", params.get("isbn", ""))
+                # ISBN line on the copyright page: rendered only when an
+                # ISBN exists — no dangling "ISBN:" label otherwise.
+                .replace(
+                    "{{ISBN_LINE}}",
+                    f"\\\\[1em]\nISBN: {params.get('isbn')}"
+                    if params.get("isbn") else "",
+                )
+                .replace(
+                    "{{TOC_BLOCK}}",
+                    _toc_block_latex(artifact['content']['blocks']), 1,
+                )
             )
             
             # Save complete LaTeX document to work directory
