@@ -59,7 +59,7 @@ logger = logging.getLogger(__name__)
 
 # Single source of truth for the deployed worker version.
 # Referenced by app.py's /health endpoint — bump only here.
-WORKER_VERSION = "1.5.0"
+WORKER_VERSION = "1.6.0"
 
 
 def _system_title_page_latex(artifact: Dict[str, Any]) -> str:
@@ -222,10 +222,22 @@ class InteriorProcessor:
             decision = self.warning_handler.evaluate(warnings)
             
             logger.info(f"[{run_id}] Warning decision: {decision.action}")
-            
+
             if decision.action == "FAIL":
                 raise ValueError(f"Cannot process: {decision.reason}")
-            
+
+            # Review gate (Gate 2 ruling Q4, 2026-07-16): a gating
+            # warning (V-005 zero-structure; V-006 when rules 1.2
+            # ships) at severity >= medium builds the book fully but
+            # completes the service as Status=Review — held out of the
+            # Ready-to-Deliver view until a human flips it to Complete.
+            review_reason = self.warning_handler.requires_review(warnings)
+            if review_reason:
+                logger.warning(
+                    f"[{run_id}] REVIEW GATE: book will build but hold "
+                    f"for human review — {review_reason}"
+                )
+
             # Step 7: Convert blocks to LaTeX. Title-page invariant
             # (§6 review, 2026-07-16): the converter never renders
             # title_page-role blocks in the body — the winner of H-001
@@ -336,18 +348,21 @@ class InteriorProcessor:
                 pdf_key=pdf_key,
                 page_count=pdf_validation['page_count'],
                 duration=duration,
-                degradations=decision.degradations
+                degradations=decision.degradations,
+                review_reason=review_reason
             )
-            
+
             logger.info(f"[{run_id}] Service updated in Airtable")
-            
+
             # Step 12: Clean up work files
             latex_file.unlink(missing_ok=True)
             pdf_file.unlink(missing_ok=True)
-            
+
             return {
                 'success': True,
                 'service_id': service_id,
+                'status': 'Review' if review_reason else 'Complete',
+                'review_reason': review_reason,
                 'pdf_url': pdf_url,
                 'page_count': pdf_validation['page_count'],
                 'duration_seconds': duration,
@@ -516,32 +531,45 @@ class InteriorProcessor:
         pdf_key: str,
         page_count: int,
         duration: float,
-        degradations: Optional[List[str]]
+        degradations: Optional[List[str]],
+        review_reason: Optional[str] = None
     ):
         """
         CANONICAL: Mark service as Complete and store outputs.
         Uses generic Artifact URL and Artifact Key fields.
+
+        review_reason (Gate 2 ruling Q4): when set, the service lands
+        in Status=Review instead of Complete — everything else is
+        identical (artifact fields, notes). Review records never enter
+        the Ready-to-Deliver view, so Zap 5 does not deliver; a human
+        flips Review -> Complete to resume. The write uses typecast so
+        Airtable creates the "Review" select option on first use.
         """
+        status = 'Review' if review_reason else 'Complete'
         fields = {
             # NOTE: Only use 'Status' (singular), never 'Statuses' (plural)
-            'Status': 'Complete',
+            'Status': status,
             'Finished At': datetime.now(timezone.utc).isoformat(),
             # CANONICAL: Write to generic artifact fields
             'Artifact URL': pdf_url,
             'Artifact Key': pdf_key,
             'Artifact Type': 'Interior PDF'
         }
-        
+
         # Store additional metadata in Operator Notes
         metadata = {
             'page_count': page_count,
             'duration_seconds': duration,
             'degradations': degradations
         }
+        if review_reason:
+            metadata['review_gate'] = review_reason
         fields['Operator Notes'] = f"Interior PDF: {json.dumps(metadata, indent=2)}"
-        
-        self.airtable_client.update_service(service_id, fields)
-        logger.info(f"Completed service {service_id}: Status → Complete")
+
+        self.airtable_client.update_service(
+            service_id, fields, typecast=bool(review_reason)
+        )
+        logger.info(f"Completed service {service_id}: Status → {status}")
     
     def _fail_service(self, service_id: str, error_message: str):
         """

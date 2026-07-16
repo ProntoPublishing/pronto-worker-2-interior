@@ -52,19 +52,25 @@ class AirtableClient:
             logger.error(f"Failed to get service {service_id}: {e}")
             return None
     
-    def update_service(self, service_id: str, fields: Dict[str, Any]) -> bool:
+    def update_service(self, service_id: str, fields: Dict[str, Any],
+                       typecast: bool = False) -> bool:
         """
         Update Service record.
-        
+
         Args:
             service_id: Airtable record ID
             fields: Fields to update
-            
+            typecast: pass True ONLY for writes that may carry a select
+                option Airtable hasn't seen yet (the "Review" status —
+                Gate 2 ruling Q4); Airtable then creates the option on
+                first write. Kept False everywhere else so typos in
+                select values still fail loudly.
+
         Returns:
             True if successful, False otherwise
         """
         try:
-            self.table.update(service_id, fields)
+            self.table.update(service_id, fields, typecast=typecast)
             logger.info(f"Updated service {service_id}: {list(fields.keys())}")
             return True
         except Exception as e:
