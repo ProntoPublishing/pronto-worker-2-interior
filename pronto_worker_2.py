@@ -61,7 +61,7 @@ logger = logging.getLogger(__name__)
 
 # Single source of truth for the deployed worker version.
 # Referenced by app.py's /health endpoint — bump only here.
-WORKER_VERSION = "1.7.2"
+WORKER_VERSION = "1.7.3"
 
 
 def _system_title_page_latex(artifact: Dict[str, Any]) -> str:
@@ -319,7 +319,7 @@ class InteriorProcessor:
                 # ISBN exists — no dangling "ISBN:" label otherwise.
                 .replace(
                     "{{ISBN_LINE}}",
-                    f"\\\\[1em]\nISBN: {params.get('isbn')}"
+                    f"\\\\[1em]\nISBN {params.get('isbn')}"
                     if params.get("isbn") else "",
                 )
                 .replace(
@@ -483,7 +483,8 @@ class InteriorProcessor:
             'chapter_style': 'numbered',
             'genre': 'fiction',
             'author_name': 'Author',
-            'book_title': 'Untitled'
+            'book_title': 'Untitled',
+            'isbn': ''
         }
         
         try:
@@ -522,7 +523,11 @@ class InteriorProcessor:
                 'chapter_style': defaults['chapter_style'],  # Not in Book Metadata yet
                 'genre': defaults['genre'],  # Not in Book Metadata yet
                 'author_name': metadata.get('Author Name', defaults['author_name']),
-                'book_title': metadata.get('Book Title', defaults['book_title'])
+                'book_title': metadata.get('Book Title', defaults['book_title']),
+                # 1.7.3: the {{ISBN_LINE}} plumbing existed since the
+                # Interior Standard, but params never carried the field
+                # — the copyright-page ISBN line could never render.
+                'isbn': (metadata.get('ISBN') or '').strip()
             }
             
             logger.info("Successfully retrieved formatting parameters from Book Metadata")

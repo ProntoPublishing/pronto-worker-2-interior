@@ -100,7 +100,7 @@ def main() -> int:
         .replace("{{ISBN}}", args.isbn)
         .replace(
             "{{ISBN_LINE}}",
-            f"\\\\[1em]\nISBN: {args.isbn}" if args.isbn else "",
+            f"\\\\[1em]\nISBN {args.isbn}" if args.isbn else "",
         )
         .replace("{{TOC_BLOCK}}", toc_block, 1)
     )
