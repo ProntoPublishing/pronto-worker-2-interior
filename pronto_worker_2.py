@@ -61,7 +61,7 @@ logger = logging.getLogger(__name__)
 
 # Single source of truth for the deployed worker version.
 # Referenced by app.py's /health endpoint — bump only here.
-WORKER_VERSION = "1.7.0"
+WORKER_VERSION = "1.7.1"
 
 
 def _system_title_page_latex(artifact: Dict[str, Any]) -> str:
@@ -575,7 +575,14 @@ class InteriorProcessor:
             # CANONICAL: Write to generic artifact fields
             'Artifact URL': pdf_url,
             'Artifact Key': pdf_key,
-            'Artifact Type': 'Interior PDF'
+            'Artifact Type': 'Interior PDF',
+            # W3 cross-check field (W3 spec R1, 2026-07-18): the
+            # counted pages of the actual interior.pdf stay canonical
+            # downstream — W3 recounts from the artifact and treats
+            # this field as a tripwire cross-check only, never a
+            # source. Same number that already goes into Operator
+            # Notes, now structured.
+            'Interior Page Count': page_count
         }
 
         # Store additional metadata in Operator Notes
@@ -588,9 +595,23 @@ class InteriorProcessor:
             metadata['review_gate'] = review_reason
         fields['Operator Notes'] = f"Interior PDF: {json.dumps(metadata, indent=2)}"
 
-        self.airtable_client.update_service(
+        ok = self.airtable_client.update_service(
             service_id, fields, typecast=bool(review_reason)
         )
+        if not ok and 'Interior Page Count' in fields:
+            # The Services field is a W3 schema prereq created by hand
+            # (W3 spec §9.4). Until it exists, Airtable rejects the
+            # whole update — and a silently un-Completed service is
+            # far worse than a missing cross-check number. Retry once
+            # without the field so completion never depends on it.
+            logger.warning(
+                "Complete write failed; retrying without Interior Page "
+                "Count (field may not exist yet — W3 schema prereq §9.4)"
+            )
+            fields.pop('Interior Page Count')
+            self.airtable_client.update_service(
+                service_id, fields, typecast=bool(review_reason)
+            )
         logger.info(f"Completed service {service_id}: Status → {status}")
     
     def _fail_service(self, service_id: str, error_message: str):
