@@ -28,6 +28,15 @@ RUN rm -rf /usr/share/fonts/woff \
  && rm -rf /root/.cache/fontconfig \
  && fc-cache -fv
 
+# Replace the package's UNFINISHED Bold (v0.016, 127 glyphs — no
+# em-dash / curly quotes / en-dash / ellipsis; renders tofu in every
+# bold heading and TOC row) with the complete v1.002 Bold from the
+# maintained EB Garamond continuation (2,091 glyphs, OFL — see
+# fonts/README.md). Same filename on purpose: the templates pin this
+# exact path, so the swap fixes both templates with zero template diff.
+COPY fonts/EBGaramond12-Bold.otf /usr/share/fonts/opentype/ebgaramond/EBGaramond12-Bold.otf
+RUN fc-cache -f
+
 # Set working directory
 WORKDIR /app
 

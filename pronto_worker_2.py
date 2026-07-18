@@ -61,7 +61,7 @@ logger = logging.getLogger(__name__)
 
 # Single source of truth for the deployed worker version.
 # Referenced by app.py's /health endpoint — bump only here.
-WORKER_VERSION = "1.7.1"
+WORKER_VERSION = "1.7.2"
 
 
 def _system_title_page_latex(artifact: Dict[str, Any]) -> str:
