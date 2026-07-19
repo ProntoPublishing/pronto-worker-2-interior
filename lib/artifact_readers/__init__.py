@@ -32,7 +32,7 @@ from typing import Any, Dict
 from . import v1, v2
 
 
-SUPPORTED_SCHEMA_VERSIONS = ("1.0", "1.1", "2.0", "2.1")
+SUPPORTED_SCHEMA_VERSIONS = ("1.0", "1.1", "2.0", "2.1", "2.2")
 
 
 class UnsupportedSchemaVersionError(ValueError):
@@ -54,9 +54,10 @@ def read_artifact(artifact: Dict[str, Any]) -> Dict[str, Any]:
     sv = artifact.get("schema_version")
     if sv in ("1.0", "1.1"):
         return v1.read(artifact)
-    if sv in ("2.0", "2.1"):
-        # 2.1 is a minor bump (roles enum grows: chapter_subtitle, per
-        # amendment spec §2.3/§5). Same shape; the v2 reader handles both.
+    if sv in ("2.0", "2.1", "2.2"):
+        # 2.1 grew the roles enum (chapter_subtitle); 2.2 adds the
+        # optional per-block `figure` object (E3 2a) — additive, the
+        # v2 reader passes it through untouched.
         return v2.read(artifact)
 
     raise UnsupportedSchemaVersionError(

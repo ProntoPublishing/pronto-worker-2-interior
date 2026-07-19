@@ -62,7 +62,7 @@ logger = logging.getLogger(__name__)
 
 # Single source of truth for the deployed worker version.
 # Referenced by app.py's /health endpoint — bump only here.
-WORKER_VERSION = "1.7.5"
+WORKER_VERSION = "1.8.0-a1"
 
 
 def _system_title_page_latex(artifact: Dict[str, Any]) -> str:
@@ -273,6 +273,98 @@ class InteriorProcessor:
                     f"for human review — {review_reason}"
                 )
 
+            # Step 6.5 (E3 2a): stage figures. Download each figure's
+            # media, run the shared battery (triple / DPI-at-measure /
+            # grayscale-v1 + contrast tripwire), write render files
+            # into the work dir, and hand the converter the block->file
+            # map. Any hold -> Review with the figure NAMED, nothing
+            # built. No figures -> byte-identical pre-E3 path.
+            figure_blocks = [b for b in artifact['content']['blocks']
+                             if b.get('type') == 'image' and b.get('figure')]
+            figures_manifest = None
+            if figure_blocks:
+                from figures import (GRAYSCALE_METHOD, validate_figure)
+                TEXT_MEASURE_IN = 4.5   # 6x9 text measure (template)
+                fig_files = {}
+                fig_entries = []
+                fig_warnings = []
+                fig_holds = []
+                for b in figure_blocks:
+                    fig = b['figure']
+                    key = fig.get('image_key')
+                    if not key:
+                        fig_holds.append(
+                            f"figure {b.get('id')}: no image_key — W1 "
+                            f"media upload incomplete")
+                        continue
+                    data = self.r2_client.download_bytes(key)
+                    fv = validate_figure(b.get('id'), fig, data,
+                                         TEXT_MEASURE_IN)
+                    fig_warnings.extend(fv.warnings)
+                    if not fv.ok:
+                        fig_holds.extend(fv.holds)
+                        if fv.render_bytes and fv.grayscale_converted:
+                            self.r2_client.s3_client.put_object(
+                                Bucket=self.r2_client.bucket_name,
+                                Key=f"services/{service_id}/review/"
+                                    f"{b.get('id')}_grayscale.png",
+                                Body=fv.render_bytes,
+                                ContentType="image/png")
+                        continue
+                    fname = f"fig_{b.get('id')}.png"
+                    (self.work_dir / fname).write_bytes(fv.render_bytes)
+                    fig_files[b.get('id')] = fname
+                    fig_entries.append({
+                        "block_id": b.get('id'),
+                        "image_key": key,
+                        "sha256": fv.source_sha256,
+                        "acquisition_class": fig.get('acquisition_class'),
+                        "rights_basis": fig.get('rights_basis'),
+                        "caption": fig.get('caption'),
+                        "credit": fig.get('credit'),
+                        "px": list(fv.px),
+                        "placed_width_in": fv.placed_w_in,
+                        "effective_dpi": round(fv.effective_dpi, 1),
+                        "grayscale": ({
+                            "method": GRAYSCALE_METHOD,
+                            "source_sha256": fv.source_sha256,
+                            "converted_sha256": fv.converted_sha256,
+                            "derivation": f"{GRAYSCALE_METHOD}("
+                                          f"{fv.source_sha256[:12]}…) -> "
+                                          f"{fv.converted_sha256[:12]}…",
+                        } if fv.grayscale_converted else None),
+                    })
+                if fig_holds:
+                    reason = "E3 figures: " + "; ".join(fig_holds)
+                    self.airtable_client.update_service(service_id, {
+                        'Status': 'Review',
+                        'Finished At': datetime.now(timezone.utc).isoformat(),
+                        'Operator Notes': f"Interior build HELD: {reason}",
+                    }, typecast=True)
+                    return {'success': True, 'service_id': service_id,
+                            'status': 'Review', 'review_reason': reason}
+                params['figure_files'] = fig_files
+                gs = [e["block_id"] for e in fig_entries if e["grayscale"]]
+                figures_manifest = {
+                    "manifest_schema": "figures_manifest.v1.0",
+                    "worker_version": WORKER_VERSION,
+                    "figures": fig_entries,
+                    "grayscale_converted_blocks": gs,
+                    "checklist_disclosure": (
+                        "figures converted for black-ink printing"
+                        if gs else None),
+                    "ai_content": {
+                        "ai_figures": sum(
+                            1 for e in fig_entries
+                            if e["acquisition_class"] == "house_ai"),
+                        "basis": "derived from per-figure acquisition "
+                                 "classes (manifest = source of truth)",
+                    },
+                    "warnings": fig_warnings,
+                }
+                logger.info(f"[{run_id}] staged {len(fig_files)} "
+                            f"figure(s), {len(gs)} grayscale-converted")
+
             # Step 7: Convert blocks to LaTeX. Title-page invariant
             # (§6 review, 2026-07-16): the converter never renders
             # title_page-role blocks in the body — the winner of H-001
@@ -372,6 +464,10 @@ class InteriorProcessor:
             
             # Step 10: Upload PDF to R2
             pdf_key = f"services/{service_id}/interior.pdf"
+            if figures_manifest is not None:
+                self.r2_client.upload_json(
+                    f"services/{service_id}/figures_manifest.json",
+                    figures_manifest)
             upload_result = self.r2_client.upload_file(
                 file_path=str(pdf_file),
                 object_key=pdf_key,

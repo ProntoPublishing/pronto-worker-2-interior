@@ -674,9 +674,36 @@ class BlocksToLatexConverter:
         )
 
     def _render_image(self, block: Dict[str, Any], ctx: Dict[str, Any]) -> str:
-        """Image extraction is deferred (v1.2 punchlist); emit a visible
-        stand-in. Same customer-neutral wording rule as _render_table.
+        """E3 2a (1.8.0-a1): anchored figure rendering. When the worker
+        validated this block's figure and staged its render file
+        (params['figure_files'][block id]), emit an unbreakable
+        centered figure at the anchor: includegraphics capped to the
+        text measure and 3/4 text height (aspect preserved — fit,
+        never crop), caption + credit in the house caption style.
+        TeX's unbreakable box IS the push-don't-split rule: a figure
+        that cannot fit the remaining page moves whole to the next.
+        Blocks without a staged file keep the pre-E3 stand-in (never a
+        silent drop).
         """
+        params = ctx.get("params") or {}
+        files = params.get("figure_files") or {}
+        path = files.get(block.get("id"))
+        if path:
+            fig = block.get("figure") or {}
+            parts = [
+                "\\par\\medskip",
+                "\\begin{center}",
+                ("\\includegraphics[width=\\linewidth,"
+                 "height=0.75\\textheight,keepaspectratio]"
+                 "{" + path + "}"),
+            ]
+            cap_bits = [b for b in (fig.get("caption"),
+                                    fig.get("credit")) if b]
+            if cap_bits:
+                cap = self._escape(" — ".join(cap_bits))
+                parts.append("\\\\[0.4em]{\\small\\itshape " + cap + "}")
+            parts += ["\\end{center}", "\\medskip\\par"]
+            return "\n".join(parts)
         return (
             "\\begin{center}\n"
             "\\textit{[Illustration omitted from this edition]}\n"

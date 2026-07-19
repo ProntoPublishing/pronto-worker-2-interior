@@ -226,3 +226,10 @@ class ProntoR2Client:
     def _compute_hash(self, data: bytes) -> str:
         """Compute SHA-256 hash of data."""
         return f"sha256:{hashlib.sha256(data).hexdigest()}"
+
+    # --- E3 addition (2026-07-20): raw bytes download (figure media) ------
+    def download_bytes(self, object_key: str) -> bytes:
+        """Download raw object bytes."""
+        response = self.s3_client.get_object(Bucket=self.bucket_name,
+                                             Key=object_key)
+        return response['Body'].read()
