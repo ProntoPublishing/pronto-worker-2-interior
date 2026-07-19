@@ -50,6 +50,7 @@ from lib.warning_handler import (
 from lib.blocks_to_latex import BlocksToLatexConverter
 from lib.pdf_generator import PDFGenerator
 from lib.pdf_validator import PDFValidator
+from imprint import ImprintNotEligibleError, resolve_imprint
 from lib.airtable_client import AirtableClient
 
 # Configure logging
@@ -61,7 +62,7 @@ logger = logging.getLogger(__name__)
 
 # Single source of truth for the deployed worker version.
 # Referenced by app.py's /health endpoint — bump only here.
-WORKER_VERSION = "1.7.4"
+WORKER_VERSION = "1.7.5"
 
 
 def _system_title_page_latex(artifact: Dict[str, Any]) -> str:
@@ -207,6 +208,18 @@ class InteriorProcessor:
             # Step 4: CANONICAL - Get formatting parameters from linked Book Metadata
             params = self._get_formatting_parameters(service)
             logger.info(f"[{run_id}] Formatting parameters: {params}")
+
+            # E4 gate: explicitly flagged book whose flag has no Bowker
+            # string -> Review before any build (Manus Amendment 2).
+            if params.get('imprint_hold'):
+                reason = f"E4: {params['imprint_hold']}"
+                self.airtable_client.update_service(service_id, {
+                    'Status': 'Review',
+                    'Finished At': datetime.now(timezone.utc).isoformat(),
+                    'Operator Notes': f"Interior build HELD: {reason}",
+                }, typecast=True)
+                return {'success': True, 'service_id': service_id,
+                        'status': 'Review', 'review_reason': reason}
             
             # Step 5: Download artifact (any supported schema version)
             # and dispatch through the parallel reader. The reader
@@ -321,6 +334,14 @@ class InteriorProcessor:
                     "{{ISBN_LINE}}",
                     f"\\\\[1em]\nISBN {params.get('isbn')}"
                     if params.get("isbn") else "",
+                )
+                # E4 (1.7.5): "Published by <flag>" ahead of the
+                # machine's credit; empty in legacy mode so existing
+                # books re-render byte-identical.
+                .replace(
+                    "{{PUBLISHER_LINE}}",
+                    f"Published by {params.get('publisher_line')}\\\\\n"
+                    if params.get("publisher_line") else "",
                 )
                 .replace(
                     "{{TOC_BLOCK}}",
@@ -529,7 +550,19 @@ class InteriorProcessor:
                 # — the copyright-page ISBN line could never render.
                 'isbn': (metadata.get('ISBN') or '').strip()
             }
-            
+
+            # E4 (1.7.5): publisher flag line on the (c) page. Ineligible
+            # linked flag -> imprint_hold, routed to Review by the caller
+            # (Manus Amendment 2: never silently substitute).
+            try:
+                imprint = resolve_imprint(metadata, self.airtable_client)
+                params['publisher_line'] = (
+                    "" if imprint['source'].startswith('legacy')
+                    else imprint['canonical'])
+                params['imprint_source'] = imprint['source']
+            except ImprintNotEligibleError as e:
+                params['imprint_hold'] = str(e)
+
             logger.info("Successfully retrieved formatting parameters from Book Metadata")
             return params
             
