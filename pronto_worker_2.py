@@ -52,6 +52,7 @@ from lib.pdf_generator import PDFGenerator
 from lib.pdf_validator import PDFValidator
 from imprint import ImprintNotEligibleError, resolve_imprint
 from lib.airtable_client import AirtableClient
+import qa
 
 # Configure logging
 logging.basicConfig(
@@ -62,7 +63,7 @@ logger = logging.getLogger(__name__)
 
 # Single source of truth for the deployed worker version.
 # Referenced by app.py's /health endpoint — bump only here.
-WORKER_VERSION = "1.8.0-a1"
+WORKER_VERSION = "1.9.0-a1"
 
 
 def _system_title_page_latex(artifact: Dict[str, Any]) -> str:
@@ -476,11 +477,31 @@ class InteriorProcessor:
             
             pdf_url = upload_result['public_url']
             logger.info(f"[{run_id}] PDF uploaded: {pdf_url}")
-            
+
+            # Step 10b: QA review (QA_Reviewer v0) — validates the
+            # produced artifact; report-only unless QA_GATING_ENABLED.
+            # Trim is the template's own 6x9 and inner margin its
+            # declared 0.85in — QA verifies renderer conformance, not
+            # the (unsupported) ordered trim.
+            qa_config = qa.QAConfig.from_env()
+            qa_result = qa.review(
+                artifact=str(pdf_file),
+                spec=qa.QASpec(
+                    artifact_type="Interior PDF", trim=(6.0, 9.0),
+                    page_count=pdf_validation['page_count'],
+                    inside_margin_in=0.85, r2_key=pdf_key),
+                r2=self.r2_client, config=qa_config)
+            qa_fields = qa_result.airtable_fields(qa_config)
+            if qa_result.should_block(qa_config):
+                qa_reason = f"QA: {qa_result.hold_summary()}"
+                review_reason = (f"{review_reason}; {qa_reason}"
+                                 if review_reason else qa_reason)
+                qa_fields.update(qa_result.blocked_fields())
+
             # Step 11: CANONICAL - Update Airtable with Complete status
             completed_at = datetime.now(timezone.utc)
             duration = (completed_at - started_at).total_seconds()
-            
+
             self._complete_service(
                 service_id=service_id,
                 pdf_url=pdf_url,
@@ -488,7 +509,8 @@ class InteriorProcessor:
                 page_count=pdf_validation['page_count'],
                 duration=duration,
                 degradations=decision.degradations,
-                review_reason=review_reason
+                review_reason=review_reason,
+                qa_fields=qa_fields
             )
 
             logger.info(f"[{run_id}] Service updated in Airtable")
@@ -688,7 +710,8 @@ class InteriorProcessor:
         page_count: int,
         duration: float,
         degradations: Optional[List[str]],
-        review_reason: Optional[str] = None
+        review_reason: Optional[str] = None,
+        qa_fields: Optional[Dict[str, Any]] = None
     ):
         """
         CANONICAL: Mark service as Complete and store outputs.
@@ -728,6 +751,8 @@ class InteriorProcessor:
         if review_reason:
             metadata['review_gate'] = review_reason
         fields['Operator Notes'] = f"Interior PDF: {json.dumps(metadata, indent=2)}"
+        if qa_fields:
+            fields.update(qa_fields)
 
         ok = self.airtable_client.update_service(
             service_id, fields, typecast=bool(review_reason)

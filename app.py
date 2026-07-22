@@ -15,6 +15,7 @@ import json
 import logging
 from flask import Flask, request, jsonify
 from pronto_worker_2 import InteriorProcessor, WORKER_VERSION
+from qa import QA_VERSION, QAConfig
 
 # Configure logging
 logging.basicConfig(
@@ -31,7 +32,9 @@ def health():
     return jsonify({
         'status': 'healthy',
         'service': 'worker_2_interior_formatter',
-        'version': WORKER_VERSION
+        'version': WORKER_VERSION,
+        'qa_version': QA_VERSION,
+        'qa_gating_enabled': QAConfig.from_env().gating_enabled
     })
 
 @app.route('/process', methods=['POST'])
