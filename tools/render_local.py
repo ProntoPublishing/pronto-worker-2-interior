@@ -31,6 +31,7 @@ sys.path.insert(0, str(REPO_ROOT))
 from lib.artifact_readers import read_artifact  # noqa: E402
 from lib.blocks_to_latex import BlocksToLatexConverter  # noqa: E402
 from lib.pdf_generator import PDFGenerator  # noqa: E402
+import trims  # noqa: E402
 
 DOCKER_FONT_PATH = "/usr/share/fonts/opentype/ebgaramond/"
 
@@ -42,6 +43,9 @@ def main() -> int:
     ap.add_argument("--title", default="Local Render")
     ap.add_argument("--author", default="Local Render")
     ap.add_argument("--genre", default="fiction")
+    ap.add_argument("--trim", default="6x9",
+                    help="Trim literal (any registered spelling); must be "
+                         "in trims.INTERIOR_TRIMS")
     ap.add_argument("--isbn", default="")
     ap.add_argument("--year", default="2026")
     ap.add_argument("--fonts", type=Path, default=None,
@@ -62,9 +66,17 @@ def main() -> int:
     )
     body = body.replace("% PREAMBLE_PLACEHOLDER", "").lstrip()
 
-    template_name = (
-        "fiction_6x9.tex" if args.genre.lower() == "fiction" else "nonfiction_6x9.tex"
-    )
+    # Trim resolution mirrors the worker (Trims v0): any registered
+    # spelling; must be in the interior renderer's supported subset.
+    if trims.parse_trim_literal(args.trim, trims.INTERIOR_TRIMS) is None:
+        print(f"trim {args.trim!r} not in INTERIOR_TRIMS "
+              f"(supported: {', '.join(trims.INTERIOR_TRIM_NAMES)})",
+              file=sys.stderr)
+        return 2
+    trim_name = trims.canonical_name(args.trim)
+
+    genre_part = "fiction" if args.genre.lower() == "fiction" else "nonfiction"
+    template_name = f"{genre_part}_{trim_name}.tex"
     template = (REPO_ROOT / template_name).read_text(encoding="utf-8")
 
     if args.fonts:
@@ -77,7 +89,9 @@ def main() -> int:
     # worker's builder rather than mirroring it (drift here produced
     # the §6 duplicate/zero-title-page defects).
     from pronto_worker_2 import _system_title_page_latex
-    system_title_page = _system_title_page_latex(artifact)
+    system_title_page = _system_title_page_latex(
+        artifact,
+        title_sink_in=trims.INTERIOR_GEOMETRY[trim_name].title_sink_in)
 
     # Interior Standard v1 §3.5 [BOUND]: TOC included when >= 2 entries.
     toc_entries = sum(

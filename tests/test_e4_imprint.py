@@ -19,7 +19,9 @@ ROOT = os.path.join(os.path.dirname(__file__), "..")
 
 class TestTemplates(unittest.TestCase):
     def test_placeholder_in_both_templates_exactly_once(self):
-        for name in ("fiction_6x9.tex", "nonfiction_6x9.tex"):
+        for name in (f"{g}_{t}.tex" for g in ("fiction", "nonfiction")
+                     for t in ("5x8", "5.25x8", "5.5x8.5", "6x9",
+                               "6.14x9.21")):
             src = open(os.path.join(ROOT, name), encoding="utf-8").read()
             self.assertEqual(src.count("{{PUBLISHER_LINE}}"), 1, name)
             # It sits directly ahead of the machine's credit line.

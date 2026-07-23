@@ -53,6 +53,7 @@ from lib.pdf_validator import PDFValidator
 from imprint import ImprintNotEligibleError, resolve_imprint
 from lib.airtable_client import AirtableClient
 import qa
+import trims
 
 # Configure logging
 logging.basicConfig(
@@ -63,10 +64,11 @@ logger = logging.getLogger(__name__)
 
 # Single source of truth for the deployed worker version.
 # Referenced by app.py's /health endpoint — bump only here.
-WORKER_VERSION = "1.9.0-a1"
+WORKER_VERSION = "1.10.0-a1"
 
 
-def _system_title_page_latex(artifact: Dict[str, Any]) -> str:
+def _system_title_page_latex(artifact: Dict[str, Any],
+                             title_sink_in: float = 2.0) -> str:
     """Build the {{SYSTEM_TITLE_PAGE}} substitution — the Interior
     Standard §3 title-page SLOT (recto after half title + blank verso,
     copyright on its verso). H-001 arbitration decides what fills it
@@ -94,11 +96,13 @@ def _system_title_page_latex(artifact: Dict[str, Any]) -> str:
             + cluster
         )
     # Interior Standard v1 §3.3 [BOUND]: title / (subtitle) / author,
-    # "PRONTO PUBLISHING" imprint line at foot.
+    # "PRONTO PUBLISHING" imprint line at foot. The sink is per-trim
+    # (trims.INTERIOR_GEOMETRY); 6x9 formats to the shipped literal
+    # "2in" so the 6x9 .tex stays byte-identical.
     return (
         "\\begin{titlepage}\n"
         "    \\centering\n"
-        "    \\vspace*{2in}\n"
+        f"    \\vspace*{{{title_sink_in:g}in}}\n"
         "    {\\Huge\\textbf{{{BOOK_TITLE}}}}\\\\[1em]\n"
         "    {\\Large {{AUTHOR_NAME}}}\n"
         "    \\vfill\n"
@@ -221,6 +225,20 @@ class InteriorProcessor:
                 }, typecast=True)
                 return {'success': True, 'service_id': service_id,
                         'status': 'Review', 'review_reason': reason}
+
+            # Trim gate (Trims v0): an ordered trim outside the interior
+            # renderer's supported set holds BEFORE any build — closes
+            # the pre-1.10 silent-wrong-trim gap where a 5x8 order
+            # rendered 6x9 and passed QA.
+            if params.get('trim_hold'):
+                reason = f"Trim: {params['trim_hold']}"
+                self.airtable_client.update_service(service_id, {
+                    'Status': 'Review',
+                    'Finished At': datetime.now(timezone.utc).isoformat(),
+                    'Operator Notes': f"Interior build HELD: {reason}",
+                }, typecast=True)
+                return {'success': True, 'service_id': service_id,
+                        'status': 'Review', 'review_reason': reason}
             
             # Step 5: Download artifact (any supported schema version)
             # and dispatch through the parallel reader. The reader
@@ -285,7 +303,10 @@ class InteriorProcessor:
             figures_manifest = None
             if figure_blocks:
                 from figures import (GRAYSCALE_METHOD, validate_figure)
-                TEXT_MEASURE_IN = 4.5   # 6x9 text measure (template)
+                # Per-trim text measure (Trims v0) — was hardcoded 4.5
+                # (the 6x9 measure) pre-1.10.
+                TEXT_MEASURE_IN = trims.INTERIOR_GEOMETRY[
+                    params['trim_name']].text_measure_in
                 fig_files = {}
                 fig_entries = []
                 fig_warnings = []
@@ -380,8 +401,12 @@ class InteriorProcessor:
             # Remove placeholder line if present
             latex_body = latex_body.replace("% PREAMBLE_PLACEHOLDER", "").lstrip()
             
-            # Pick template based on genre
-            template_name = "fiction_6x9.tex" if params.get("genre", "").lower() == "fiction" else "nonfiction_6x9.tex"
+            # Pick template by genre + trim (Trims v0). Genre remains
+            # stubbed to its default upstream (known gap, separate
+            # ticket); trim comes from the resolved Book Metadata order.
+            genre_part = ("fiction" if params.get("genre", "").lower() == "fiction"
+                          else "nonfiction")
+            template_name = f"{genre_part}_{params['trim_name']}.tex"
             template_path = Path(__file__).resolve().parent / template_name
             template = template_path.read_text(encoding="utf-8")
             
@@ -401,7 +426,10 @@ class InteriorProcessor:
             # Title-page slot: H-001 arbitration fills it with either the
             # author's classified cluster or the standard system page —
             # see _system_title_page_latex for the invariant.
-            system_title_page = _system_title_page_latex(artifact)
+            system_title_page = _system_title_page_latex(
+                artifact,
+                title_sink_in=trims.INTERIOR_GEOMETRY[
+                    params['trim_name']].title_sink_in)
 
             # Replace the body placeholder with count=1 explicitly. latex_body
             # is a multi-line string containing the entire book; any second
@@ -478,18 +506,19 @@ class InteriorProcessor:
             pdf_url = upload_result['public_url']
             logger.info(f"[{run_id}] PDF uploaded: {pdf_url}")
 
-            # Step 10b: QA review (QA_Reviewer v0) — validates the
-            # produced artifact; report-only unless QA_GATING_ENABLED.
-            # Trim is the template's own 6x9 and inner margin its
-            # declared 0.85in — QA verifies renderer conformance, not
-            # the (unsupported) ordered trim.
+            # Step 10b: QA review (QA_Reviewer v0). Since Trims v0 the
+            # spec carries the ORDERED trim (parsed + template-matched
+            # upstream), so QA now verifies output = order — the whole
+            # point of the trim gate.
+            qa_geom = trims.INTERIOR_GEOMETRY[params['trim_name']]
             qa_config = qa.QAConfig.from_env()
             qa_result = qa.review(
                 artifact=str(pdf_file),
                 spec=qa.QASpec(
-                    artifact_type="Interior PDF", trim=(6.0, 9.0),
+                    artifact_type="Interior PDF",
+                    trim=params['trim_dims'],
                     page_count=pdf_validation['page_count'],
-                    inside_margin_in=0.85, r2_key=pdf_key),
+                    inside_margin_in=qa_geom.inner_in, r2_key=pdf_key),
                 r2=self.r2_client, config=qa_config)
             qa_fields = qa_result.airtable_fields(qa_config)
             if qa_result.should_block(qa_config):
@@ -618,6 +647,8 @@ class InteriorProcessor:
         # Default parameters (used if lookups fail)
         defaults = {
             'trim_size': '6x9',
+            'trim_name': '6x9',
+            'trim_dims': trims.TRIMS['6x9'].dims,
             'font': 'Garamond',
             'chapter_style': 'numbered',
             'genre': 'fiction',
@@ -668,6 +699,29 @@ class InteriorProcessor:
                 # — the copyright-page ISBN line could never render.
                 'isbn': (metadata.get('ISBN') or '').strip()
             }
+
+            # Trims v0 (1.10.0): resolve the ordered trim against the
+            # interior renderer's supported set. Absent/empty keeps the
+            # historical 6x9 default; a literal outside INTERIOR_TRIMS
+            # -> trim_hold, routed to Review by the caller (never a
+            # silent 6x9 substitute — the pre-1.10 gap).
+            raw_trim = params['trim_size']
+            if isinstance(raw_trim, dict):        # singleSelect object shape
+                raw_trim = raw_trim.get('name', '')
+            trim_literal = (str(raw_trim).strip() if raw_trim is not None
+                            else '')
+            if not trim_literal:
+                trim_literal = defaults['trim_size']
+            dims = trims.parse_trim_literal(trim_literal,
+                                            trims.INTERIOR_TRIMS)
+            if dims is None:
+                params['trim_hold'] = (
+                    f"trim {trim_literal!r} not supported by the interior "
+                    f"renderer (supported: "
+                    f"{', '.join(trims.INTERIOR_TRIM_NAMES)})")
+            else:
+                params['trim_name'] = trims.canonical_name(trim_literal)
+                params['trim_dims'] = dims
 
             # E4 (1.7.5): publisher flag line on the (c) page. Ineligible
             # linked flag -> imprint_hold, routed to Review by the caller

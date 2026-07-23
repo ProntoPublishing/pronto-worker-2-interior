@@ -32,7 +32,10 @@ class Test_TemplateContentPlaceholder(unittest.TestCase):
     breaks out of the '%' comment at its first newline.
     """
 
-    TEMPLATES = ("fiction_6x9.tex", "nonfiction_6x9.tex")
+    # Trims v0: every genre x trim template carries the invariant.
+    TEMPLATES = tuple(
+        f"{g}_{t}.tex" for g in ("fiction", "nonfiction")
+        for t in ("5x8", "5.25x8", "5.5x8.5", "6x9", "6.14x9.21"))
 
     def test_each_template_has_exactly_one_content_placeholder(self):
         for name in self.TEMPLATES:
@@ -923,7 +926,9 @@ class Test_TemplateSystemTitlePagePlaceholder(unittest.TestCase):
     """
 
     def test_each_template_has_system_title_page_placeholder(self):
-        for name in ("fiction_6x9.tex", "nonfiction_6x9.tex"):
+        for name in (f"{g}_{t}.tex" for g in ("fiction", "nonfiction")
+                     for t in ("5x8", "5.25x8", "5.5x8.5", "6x9",
+                               "6.14x9.21")):
             text = (REPO_ROOT / name).read_text(encoding="utf-8")
             self.assertEqual(
                 text.count("{{SYSTEM_TITLE_PAGE}}"), 1,
