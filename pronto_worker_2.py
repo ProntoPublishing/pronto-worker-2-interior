@@ -64,7 +64,7 @@ logger = logging.getLogger(__name__)
 
 # Single source of truth for the deployed worker version.
 # Referenced by app.py's /health endpoint — bump only here.
-WORKER_VERSION = "1.10.0-a1"
+WORKER_VERSION = "1.11.0-a1"
 
 
 def _system_title_page_latex(artifact: Dict[str, Any],
@@ -401,9 +401,8 @@ class InteriorProcessor:
             # Remove placeholder line if present
             latex_body = latex_body.replace("% PREAMBLE_PLACEHOLDER", "").lstrip()
             
-            # Pick template by genre + trim (Trims v0). Genre remains
-            # stubbed to its default upstream (known gap, separate
-            # ticket); trim comes from the resolved Book Metadata order.
+            # Pick template by genre + trim. Both now come from Book
+            # Metadata: Genre (Genre-Aware v0) and Trim Size (Trims v0).
             genre_part = ("fiction" if params.get("genre", "").lower() == "fiction"
                           else "nonfiction")
             template_name = f"{genre_part}_{params['trim_name']}.tex"
@@ -691,7 +690,7 @@ class InteriorProcessor:
                 'trim_size': metadata.get('Trim Size', defaults['trim_size']),
                 'font': defaults['font'],  # Font not in Book Metadata yet
                 'chapter_style': defaults['chapter_style'],  # Not in Book Metadata yet
-                'genre': defaults['genre'],  # Not in Book Metadata yet
+                'genre': defaults['genre'],  # resolved below (Genre-Aware v0)
                 'author_name': metadata.get('Author Name', defaults['author_name']),
                 'book_title': metadata.get('Book Title', defaults['book_title']),
                 # 1.7.3: the {{ISBN_LINE}} plumbing existed since the
@@ -699,6 +698,26 @@ class InteriorProcessor:
                 # — the copyright-page ISBN line could never render.
                 'isbn': (metadata.get('ISBN') or '').strip()
             }
+
+            # Genre-Aware v0 (1.11.0): route the template family from
+            # the Book Metadata `Genre` select (purpose-built binary:
+            # Fiction / Nonfiction). Empty/unrecognized defaults to
+            # Fiction — today's behavior — but earns a logged warning
+            # (silent defaults earn a warning, fleet posture). Genre
+            # selects the TEMPLATE, never the trim.
+            raw_genre = metadata.get('Genre')
+            if isinstance(raw_genre, dict):      # singleSelect object shape
+                raw_genre = raw_genre.get('name', '')
+            genre_literal = (str(raw_genre).strip() if raw_genre is not None
+                             else '')
+            if genre_literal.lower() in ('fiction', 'nonfiction'):
+                params['genre'] = genre_literal.lower()
+            else:
+                params['genre'] = defaults['genre']
+                logger.warning(
+                    "genre-default-fiction: Book Metadata Genre is "
+                    f"{genre_literal!r} (expected Fiction/Nonfiction) — "
+                    "defaulting to the fiction template family")
 
             # Trims v0 (1.10.0): resolve the ordered trim against the
             # interior renderer's supported set. Absent/empty keeps the
