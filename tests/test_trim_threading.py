@@ -117,3 +117,71 @@ class TestTemplatePresence(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestBindingResolution(unittest.TestCase):
+    """Hardcover v0: Format routes the binding; the trim accept-table
+    follows it; empty/unrecognized Format -> paperback + warning."""
+
+    def _params(self, bm_extra):
+        bm = {"Book Title": "T", "Author Name": "A"}
+        bm.update(bm_extra)
+        return _processor(bm)._get_formatting_parameters(SERVICE)
+
+    def test_hardcover_7x10_resolves(self):
+        params = self._params({"Format": {"name": "Hardcover"},
+                               "Trim Size": '7" × 10"'})
+        self.assertEqual(params["binding"], "hardcover")
+        self.assertEqual(params["trim_name"], "7x10")
+        self.assertEqual(params["trim_dims"], (7.0, 10.0))
+        self.assertNotIn("trim_hold", params)
+
+    def test_hardcover_8_25x11_resolves(self):
+        params = self._params({"Format": "Hardcover",
+                               "Trim Size": "8.25x11"})
+        self.assertEqual(params["trim_name"], "8.25x11")
+
+    def test_paperback_7x10_holds(self):
+        params = self._params({"Trim Size": '7" × 10"'})
+        self.assertEqual(params["binding"], "paperback")
+        self.assertIn("trim_hold", params)
+        self.assertIn("paperback", params["trim_hold"])
+
+    def test_hardcover_5x8_holds(self):
+        # 5x8 is not a KDP case-laminate size.
+        params = self._params({"Format": "Hardcover", "Trim Size": "5x8"})
+        self.assertIn("trim_hold", params)
+        self.assertIn("hardcover", params["trim_hold"])
+
+    def test_empty_format_defaults_paperback_with_warning(self):
+        with self.assertLogs("pronto_worker_2", level="WARNING") as cm:
+            params = self._params({"Trim Size": "6x9"})
+        self.assertEqual(params["binding"], "paperback")
+        self.assertTrue(any("format-default-paperback" in line
+                            for line in cm.output))
+
+    def test_shared_trim_same_template_both_bindings(self):
+        # Interior is binding-agnostic at shared trims: same trim_name
+        # -> same template file either way.
+        pb = self._params({"Trim Size": '6" × 9"'})
+        hc = self._params({"Format": "Hardcover", "Trim Size": '6" × 9"'})
+        self.assertEqual(pb["trim_name"], hc["trim_name"])
+
+
+class TestLargeFormatTemplates(unittest.TestCase):
+    def test_12pt_templates_exist_and_carry_ruling(self):
+        import trims as t
+        root = os.path.join(os.path.dirname(__file__), "..")
+        expect = {"7x10": ("7in", "1.0in", "0.8in", "1.066"),
+                  "8.25x11": ("8.25in", "1.35in", "1.35in", "1.15")}
+        for name, (w, inner, outer, stretch) in expect.items():
+            for genre in ("fiction", "nonfiction"):
+                path = os.path.join(root, f"{genre}_{name}.tex")
+                self.assertTrue(os.path.exists(path), path)
+                src = open(path, encoding="utf-8").read()
+                self.assertIn("\documentclass[12pt,openany]{book}", src, path)
+                self.assertIn(f"paperwidth={w},", src, path)
+                self.assertIn(f"inner={inner},", src, path)
+                self.assertIn(f"outer={outer},", src, path)
+                self.assertIn(f"\setstretch{{{stretch}}}", src, path)
+                self.assertIn("headheight=15pt,", src, path)

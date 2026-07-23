@@ -64,7 +64,7 @@ logger = logging.getLogger(__name__)
 
 # Single source of truth for the deployed worker version.
 # Referenced by app.py's /health endpoint — bump only here.
-WORKER_VERSION = "1.11.0-a1"
+WORKER_VERSION = "1.12.0-a1"
 
 
 def _system_title_page_latex(artifact: Dict[str, Any],
@@ -517,7 +517,8 @@ class InteriorProcessor:
                     artifact_type="Interior PDF",
                     trim=params['trim_dims'],
                     page_count=pdf_validation['page_count'],
-                    inside_margin_in=qa_geom.inner_in, r2_key=pdf_key),
+                    inside_margin_in=qa_geom.inner_in, r2_key=pdf_key,
+                    binding=params['binding']),
                 r2=self.r2_client, config=qa_config)
             qa_fields = qa_result.airtable_fields(qa_config)
             if qa_result.should_block(qa_config):
@@ -648,6 +649,7 @@ class InteriorProcessor:
             'trim_size': '6x9',
             'trim_name': '6x9',
             'trim_dims': trims.TRIMS['6x9'].dims,
+            'binding': trims.BINDING_PAPERBACK,
             'font': 'Garamond',
             'chapter_style': 'numbered',
             'genre': 'fiction',
@@ -719,10 +721,29 @@ class InteriorProcessor:
                     f"{genre_literal!r} (expected Fiction/Nonfiction) — "
                     "defaulting to the fiction template family")
 
+            # Hardcover v0 (1.12.0): resolve the binding first — the
+            # trim accept-table depends on it (a 7x10 order is
+            # renderable as hardcover, unshipped as paperback).
+            # Empty/unrecognized Format -> paperback + logged warning.
+            raw_format = metadata.get('Format')
+            if isinstance(raw_format, dict):     # singleSelect object shape
+                raw_format = raw_format.get('name', '')
+            format_literal = (str(raw_format).strip()
+                              if raw_format is not None else '')
+            if format_literal.lower() in (trims.BINDING_PAPERBACK,
+                                          trims.BINDING_HARDCOVER):
+                params['binding'] = format_literal.lower()
+            else:
+                params['binding'] = trims.BINDING_PAPERBACK
+                logger.warning(
+                    "format-default-paperback: Book Metadata Format is "
+                    f"{format_literal!r} (expected Paperback/Hardcover) — "
+                    "defaulting to the paperback binding")
+
             # Trims v0 (1.10.0): resolve the ordered trim against the
-            # interior renderer's supported set. Absent/empty keeps the
-            # historical 6x9 default; a literal outside INTERIOR_TRIMS
-            # -> trim_hold, routed to Review by the caller (never a
+            # binding's supported set. Absent/empty keeps the
+            # historical 6x9 default; a literal outside the set ->
+            # trim_hold, routed to Review by the caller (never a
             # silent 6x9 substitute — the pre-1.10 gap).
             raw_trim = params['trim_size']
             if isinstance(raw_trim, dict):        # singleSelect object shape
@@ -731,13 +752,15 @@ class InteriorProcessor:
                             else '')
             if not trim_literal:
                 trim_literal = defaults['trim_size']
-            dims = trims.parse_trim_literal(trim_literal,
-                                            trims.INTERIOR_TRIMS)
+            accept_table = trims.INTERIOR_TRIMS_BY_BINDING[params['binding']]
+            dims = trims.parse_trim_literal(trim_literal, accept_table)
             if dims is None:
+                supported = trims.INTERIOR_TRIM_NAMES_BY_BINDING[
+                    params['binding']]
                 params['trim_hold'] = (
                     f"trim {trim_literal!r} not supported by the interior "
-                    f"renderer (supported: "
-                    f"{', '.join(trims.INTERIOR_TRIM_NAMES)})")
+                    f"renderer for {params['binding']} (supported: "
+                    f"{', '.join(supported)})")
             else:
                 params['trim_name'] = trims.canonical_name(trim_literal)
                 params['trim_dims'] = dims

@@ -45,7 +45,9 @@ def main() -> int:
     ap.add_argument("--genre", default="fiction")
     ap.add_argument("--trim", default="6x9",
                     help="Trim literal (any registered spelling); must be "
-                         "in trims.INTERIOR_TRIMS")
+                         "in the binding's interior set")
+    ap.add_argument("--binding", default="paperback",
+                    choices=["paperback", "hardcover"])
     ap.add_argument("--isbn", default="")
     ap.add_argument("--year", default="2026")
     ap.add_argument("--fonts", type=Path, default=None,
@@ -68,10 +70,11 @@ def main() -> int:
 
     # Trim resolution mirrors the worker (Trims v0): any registered
     # spelling; must be in the interior renderer's supported subset.
-    if trims.parse_trim_literal(args.trim, trims.INTERIOR_TRIMS) is None:
-        print(f"trim {args.trim!r} not in INTERIOR_TRIMS "
-              f"(supported: {', '.join(trims.INTERIOR_TRIM_NAMES)})",
-              file=sys.stderr)
+    accept = trims.INTERIOR_TRIMS_BY_BINDING[args.binding]
+    if trims.parse_trim_literal(args.trim, accept) is None:
+        names = trims.INTERIOR_TRIM_NAMES_BY_BINDING[args.binding]
+        print(f"trim {args.trim!r} not supported for {args.binding} "
+              f"(supported: {', '.join(names)})", file=sys.stderr)
         return 2
     trim_name = trims.canonical_name(args.trim)
 
