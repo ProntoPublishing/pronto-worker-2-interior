@@ -64,7 +64,25 @@ logger = logging.getLogger(__name__)
 
 # Single source of truth for the deployed worker version.
 # Referenced by app.py's /health endpoint — bump only here.
-WORKER_VERSION = "1.12.0-a1"
+WORKER_VERSION = "1.12.1-a1"
+
+
+def bare_image_hold_reason(blocks) -> Optional[str]:
+    """1.12.1 (Interior Catch-Up Part A): image blocks WITHOUT figure
+    nodes come only from pre-2.2 artifacts (W1 5.4.0+ stamps a figure
+    node on every embedded image). Rendering used to fall back to a
+    visible "[Illustration omitted]" stand-in — visible, but neither
+    placed nor held, and images are a paid feature. Hold instead,
+    naming the fix. Returns None when every image block carries a
+    figure node (or there are no image blocks)."""
+    bare = [b.get('id') for b in blocks
+            if b.get('type') == 'image' and not b.get('figure')]
+    if not bare:
+        return None
+    return (f"images: block(s) {', '.join(map(str, bare))} are image "
+            f"blocks with no figure node — the manuscript artifact "
+            f"predates schema 2.2; re-run W1 (5.4.0+) to extract the "
+            f"embedded media, then re-run this service")
 
 
 def _system_title_page_latex(artifact: Dict[str, Any],
@@ -300,6 +318,21 @@ class InteriorProcessor:
             # built. No figures -> byte-identical pre-E3 path.
             figure_blocks = [b for b in artifact['content']['blocks']
                              if b.get('type') == 'image' and b.get('figure')]
+            # 1.12.1 (Interior Catch-Up Part A): an image block WITHOUT a
+            # figure node can only come from a pre-2.2 artifact (W1 now
+            # stamps one on every embedded image). It used to render a
+            # visible "[Illustration omitted]" stand-in — visible, but
+            # neither placed nor held, and the customer paid for images.
+            # Hold with the fix named instead.
+            reason = bare_image_hold_reason(artifact['content']['blocks'])
+            if reason:
+                self.airtable_client.update_service(service_id, {
+                    'Status': 'Review',
+                    'Finished At': datetime.now(timezone.utc).isoformat(),
+                    'Operator Notes': f"Interior build HELD: {reason}",
+                }, typecast=True)
+                return {'success': True, 'service_id': service_id,
+                        'status': 'Review', 'review_reason': reason}
             figures_manifest = None
             if figure_blocks:
                 from figures import (GRAYSCALE_METHOD, validate_figure)

@@ -139,3 +139,38 @@ class TestConverterFigure(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestBareImageHold(unittest.TestCase):
+    """1.12.1 (Interior Catch-Up Part A): an image block with no figure
+    node must HOLD, not render the visible stand-in — images are a paid
+    feature; visible-but-absent is still absent."""
+
+    def test_bare_image_block_holds_with_reason(self):
+        from pronto_worker_2 import bare_image_hold_reason
+        blocks = [
+            {"id": "b1", "type": "paragraph", "role": "body_paragraph",
+             "spans": [{"text": "t"}]},
+            {"id": "b2", "type": "image"},                # pre-2.2 bare
+            {"id": "b3", "type": "image", "figure": {"image_key": "k"}},
+        ]
+        reason = bare_image_hold_reason(blocks)
+        self.assertIsNotNone(reason)
+        self.assertIn("b2", reason)
+        self.assertNotIn("b3", reason)
+        self.assertIn("re-run W1", reason)
+
+    def test_figured_images_do_not_hold(self):
+        from pronto_worker_2 import bare_image_hold_reason
+        blocks = [
+            {"id": "b1", "type": "image", "figure": {"image_key": "k"}},
+            {"id": "b2", "type": "paragraph", "role": "body_paragraph",
+             "spans": [{"text": "t"}]},
+        ]
+        self.assertIsNone(bare_image_hold_reason(blocks))
+
+    def test_no_images_no_hold(self):
+        from pronto_worker_2 import bare_image_hold_reason
+        self.assertIsNone(bare_image_hold_reason(
+            [{"id": "b1", "type": "paragraph", "role": "body_paragraph",
+              "spans": [{"text": "t"}]}]))
