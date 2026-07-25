@@ -41,17 +41,7 @@
 % FONTS
 % ============================================================================
 
-% Main font: EB Garamond, pinned to explicit OTF paths to bypass fontconfig.
-\setmainfont{EB Garamond}[
-  Path = /usr/share/fonts/opentype/ebgaramond/ ,
-  Extension = .otf ,
-  UprightFont = EBGaramond12-Regular ,
-  ItalicFont = EBGaramond12-Italic ,
-  BoldFont = EBGaramond12-Bold ,
-  BoldItalicFont = EBGaramond12-Bold ,
-  BoldItalicFeatures = {FakeSlant=0.2} ,
-  Ligatures = TeX ,
-]
+{{FONT_SETUP}}
 
 % ============================================================================
 % TYPOGRAPHY
@@ -216,6 +206,7 @@ First edition, {{YEAR}}
 \end{flushleft}
 \clearpage
 
+{{DEDICATION_BLOCK}}
 % Table of contents — Standard §3.5 [BOUND]: conditional (>= 2 entries).
 {{TOC_BLOCK}}
 
@@ -249,6 +240,7 @@ First edition, {{YEAR}}
 % ============================================================================
 
 \backmatter
+{{BACK_MATTER_BLOCK}}
 
 % Back-matter blocks (About the Author, Index, etc.) are produced by
 % Worker 1 and emitted as part of the body content above. Do not

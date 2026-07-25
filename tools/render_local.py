@@ -53,6 +53,17 @@ def main() -> int:
     ap.add_argument("--fonts", type=Path, default=None,
                     help="Directory containing EBGaramond12-{Regular,Italic,Bold}.otf")
     ap.add_argument("--run-id", default="local")
+    # Part B (1.13.0): interior font axis + matter toggles.
+    ap.add_argument("--interior-font", default=None,
+                    help="Interior Font field value (EB Garamond/Lora/"
+                         "Libertine); empty = default")
+    ap.add_argument("--font-path-rewrite", default=None,
+                    help="LOCAL=PROD pair, e.g. C:/fonts/lora="
+                         "/usr/share/fonts/truetype/lora/ — rewrites the "
+                         "chosen voice's production font path for a dev box")
+    ap.add_argument("--dedication", default=None)
+    ap.add_argument("--acknowledgements", default=None)
+    ap.add_argument("--about-the-author", default=None)
     args = ap.parse_args()
 
     raw = json.loads(args.artifact.read_text(encoding="utf-8"))
@@ -106,13 +117,38 @@ def main() -> int:
         else f"% TOC omitted: {toc_entries} entry(ies) < 2 (Standard s3.5)"
     )
 
+    # Part B (1.13.0): the same three seams the worker fills.
+    from interior_fonts import resolve_interior_font
+    from matter_pages import back_matter_latex, dedication_latex
+    font_sel, font_warning = resolve_interior_font(args.interior_font)
+    if font_warning:
+        print(f"WARNING: {font_warning}")
+    font_setup = font_sel.setup_latex
+    # --fonts rewrites the EB Garamond production path; since 1.13.0 the
+    # font block arrives via {{FONT_SETUP}} (after the template rewrite
+    # ran), so apply the same rewrite here.
+    if args.fonts:
+        font_dir = args.fonts.resolve().as_posix()
+        if not font_dir.endswith("/"):
+            font_dir += "/"
+        font_setup = font_setup.replace(DOCKER_FONT_PATH, font_dir)
+    if args.font_path_rewrite:
+        local, prod = args.font_path_rewrite.split("=", 1)
+        local = Path(local).resolve().as_posix()
+        if not local.endswith("/"):
+            local += "/"
+        font_setup = font_setup.replace(prod, local)
+    dedication_block = dedication_latex(args.dedication)
+    back_matter_block = back_matter_latex(args.acknowledgements,
+                                          args.about_the_author)
+
     latex_content = (
         template
         .replace("{{CONTENT}}", body, 1)
         .replace("{{SYSTEM_TITLE_PAGE}}", system_title_page, 1)
         .replace("{{BOOK_TITLE}}", args.title)
         .replace("{{AUTHOR_NAME}}", args.author)
-        .replace("{{FONT_NAME}}", "EB Garamond")
+        .replace("{{FONT_NAME}}", font_sel.name)
         .replace("{{YEAR}}", args.year)
         .replace("{{ISBN}}", args.isbn)
         .replace(
@@ -120,6 +156,15 @@ def main() -> int:
             f"\\\\[1em]\nISBN {args.isbn}" if args.isbn else "",
         )
         .replace("{{TOC_BLOCK}}", toc_block, 1)
+        .replace("{{FONT_SETUP}}", font_setup, 1)
+        .replace(
+            "{{DEDICATION_BLOCK}}\n",
+            f"{dedication_block}\n" if dedication_block else "", 1,
+        )
+        .replace(
+            "{{BACK_MATTER_BLOCK}}\n",
+            f"{back_matter_block}\n" if back_matter_block else "", 1,
+        )
     )
 
     args.out_dir.mkdir(parents=True, exist_ok=True)

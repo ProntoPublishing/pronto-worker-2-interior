@@ -37,6 +37,13 @@ RUN rm -rf /usr/share/fonts/woff \
 COPY fonts/EBGaramond12-Bold.otf /usr/share/fonts/opentype/ebgaramond/EBGaramond12-Bold.otf
 RUN fc-cache -f
 
+# Interior font axis (Part B, 1.13.0): Lora vendored static instances
+# (Regular/Italic from the covers' vendor; Bold/BoldItalic instanced
+# from the Lora VFs at wght=700; OFL). Libertine needs no COPY — the
+# fonts-linuxlibertine package above already installs it.
+COPY fonts/lora/ /usr/share/fonts/truetype/lora/
+RUN fc-cache -f
+
 # Set working directory
 WORKDIR /app
 

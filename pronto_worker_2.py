@@ -54,6 +54,8 @@ from imprint import ImprintNotEligibleError, resolve_imprint
 from lib.airtable_client import AirtableClient
 import qa
 import trims
+from interior_fonts import resolve_interior_font
+from matter_pages import back_matter_latex, dedication_latex
 
 # Configure logging
 logging.basicConfig(
@@ -64,7 +66,7 @@ logger = logging.getLogger(__name__)
 
 # Single source of truth for the deployed worker version.
 # Referenced by app.py's /health endpoint — bump only here.
-WORKER_VERSION = "1.12.1-a1"
+WORKER_VERSION = "1.13.0-a1"
 
 
 def bare_image_hold_reason(blocks) -> Optional[str]:
@@ -445,15 +447,25 @@ class InteriorProcessor:
             # Fill template placeholders
             now_year = str(datetime.now(timezone.utc).year)
             
-            # Map font names to installed fonts
-            font_map = {
-                "Garamond": "EB Garamond",
-                "Palatino": "Linux Libertine O",
-                "Times": "Liberation Serif",
-                "Times New Roman": "Liberation Serif"
-            }
-            requested_font = params.get("font", "Garamond")
-            actual_font = font_map.get(requested_font, "EB Garamond")
+            # Part B (1.13.0): interior font axis — Book Metadata
+            # `Interior Font` selects the body face from three curated
+            # voices; empty -> EB Garamond (byte-identical default),
+            # unknown -> default + logged warning. The old params
+            # font_map (Garamond/Palatino/Times) is superseded: those
+            # values never had a template seam to act through.
+            font_sel, font_warning = resolve_interior_font(
+                params.get('interior_font'))
+            if font_warning:
+                logger.warning(font_warning)
+            actual_font = font_sel.name
+
+            # Part B (1.13.0): matter toggles — empty field -> the
+            # placeholder line is consumed, assembling byte-identical
+            # to a book without the feature.
+            dedication_block = dedication_latex(params.get('dedication'))
+            back_matter_block = back_matter_latex(
+                params.get('acknowledgements'),
+                params.get('about_the_author'))
             
             # Title-page slot: H-001 arbitration fills it with either the
             # author's classified cluster or the standard system page —
@@ -499,6 +511,18 @@ class InteriorProcessor:
                 .replace(
                     "{{TOC_BLOCK}}",
                     _toc_block_latex(artifact['content']['blocks']), 1,
+                )
+                # Part B (1.13.0): font seam + matter slots. The
+                # placeholder LINE is consumed when a slot is empty —
+                # the assembled .tex is byte-identical to pre-1.13.
+                .replace("{{FONT_SETUP}}", font_sel.setup_latex, 1)
+                .replace(
+                    "{{DEDICATION_BLOCK}}\n",
+                    f"{dedication_block}\n" if dedication_block else "", 1,
+                )
+                .replace(
+                    "{{BACK_MATTER_BLOCK}}\n",
+                    f"{back_matter_block}\n" if back_matter_block else "", 1,
                 )
             )
             
@@ -723,7 +747,15 @@ class InteriorProcessor:
             # Extract parameters from Book Metadata
             params = {
                 'trim_size': metadata.get('Trim Size', defaults['trim_size']),
-                'font': defaults['font'],  # Font not in Book Metadata yet
+                'font': defaults['font'],  # legacy field, superseded by
+                                           # interior_font below (1.13.0)
+                # Part B (1.13.0): interior font axis + matter toggles.
+                # Resolution happens at template fill (resolve_interior_font
+                # warns there); raw fields ride params.
+                'interior_font': metadata.get('Interior Font'),
+                'dedication': metadata.get('Dedication'),
+                'acknowledgements': metadata.get('Acknowledgements'),
+                'about_the_author': metadata.get('About the Author'),
                 'chapter_style': defaults['chapter_style'],  # Not in Book Metadata yet
                 'genre': defaults['genre'],  # resolved below (Genre-Aware v0)
                 'author_name': metadata.get('Author Name', defaults['author_name']),
