@@ -39,7 +39,7 @@ class TestQueuePoll(unittest.TestCase):
         # spawns under test; then check the shipped default constant.
         with patch.dict(os.environ, {"QUEUE_POLL_ENABLED": "false"}):
             import app
-        self.assertEqual(app.QUEUE_POLL_DEFAULT, 'false')
+        self.assertEqual(app.QUEUE_POLL_DEFAULT, 'true')
         # exactly-'true' semantics
         with patch.dict(os.environ, {"QUEUE_POLL_ENABLED": "TRUE"}):
             self.assertTrue(app._queue_poll_enabled())
