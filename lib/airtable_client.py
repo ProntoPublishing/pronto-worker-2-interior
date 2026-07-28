@@ -35,6 +35,22 @@ class AirtableClient:
         
         logger.info(f"Airtable client initialized: {self.base_id}/{self.table_name}")
     
+    def list_ready_services(self) -> list:
+        """Queue-poll doorbell (order 9N2x9xK, W6 Finding-7 pattern
+        fleet-wide): services ready to run in THIS worker's lane --
+        Status=Paid, dependencies Met, instance id containing
+        '-INTFMT'. Zap doorbells dedupe on Last-Modified and can miss
+        first runs and ALL re-flips (R6); the poller is deterministic.
+        Returns [(record_id, fields), ...]."""
+        formula = ("AND({Status}='Paid', {Met}=1, "
+                   "FIND('-INTFMT', {Service Instance ID}))")
+        try:
+            records = self.table.all(formula=formula)
+        except Exception as e:
+            logger.error(f"queue poll failed: {e}")
+            return []
+        return [(r["id"], r.get("fields", {})) for r in records]
+
     def get_service(self, service_id: str) -> Optional[Dict[str, Any]]:
         """
         Get Service record by ID.

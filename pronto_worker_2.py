@@ -66,7 +66,7 @@ logger = logging.getLogger(__name__)
 
 # Single source of truth for the deployed worker version.
 # Referenced by app.py's /health endpoint — bump only here.
-WORKER_VERSION = "1.13.0-a1"
+WORKER_VERSION = "1.14.0-a1"
 
 
 def bare_image_hold_reason(blocks) -> Optional[str]:
