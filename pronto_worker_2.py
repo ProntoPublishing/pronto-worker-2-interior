@@ -56,6 +56,8 @@ import qa
 import trims
 from interior_fonts import resolve_interior_font
 from matter_pages import back_matter_latex, dedication_latex
+from front_matter_respect import (copyright_verdicts, element_text,
+                                  suppression_decisions)
 
 # Configure logging
 logging.basicConfig(
@@ -459,13 +461,47 @@ class InteriorProcessor:
                 logger.warning(font_warning)
             actual_font = font_sel.name
 
+            # Front-Matter Contract v1 (2026-07-28): the manuscript WINS
+            # when it carries its own front matter; the form fills gaps
+            # when it doesn't. W1's `front_matter` section says what the
+            # author already made; we suppress our generator for those
+            # and record the collision notes. Degrade-safe: an artifact
+            # without the section suppresses nothing (today's behavior).
+            fm_suppress, fm_notes = suppression_decisions(artifact, params)
+            for _n in fm_notes:
+                logger.info(f"[{run_id}] front-matter contract: {_n}")
+
+            # A3 — the copyright floor. When the author carries their own
+            # copyright page it SHIPS AS WRITTEN and we cross-check it;
+            # we never rewrite it. Absent ISBN warns, a DIFFERENT ISBN or
+            # a mismatched imprint holds for a human. Edition strings and
+            # the year are author voice and are never checked.
+            if fm_suppress.get("copyright_page"):
+                for _v in copyright_verdicts(
+                        element_text(artifact, "copyright_page"),
+                        assigned_isbn=params.get('isbn'),
+                        imprint=params.get('publisher_line')):
+                    if _v["level"] == "hold":
+                        review_reason = (
+                            f"{review_reason}; {_v['detail']}"
+                            if review_reason else _v["detail"])
+                        logger.warning(f"[{run_id}] front-matter HOLD: "
+                                       f"{_v['detail']}")
+                    else:
+                        logger.warning(f"[{run_id}] front-matter warning: "
+                                       f"{_v['detail']}")
+
             # Part B (1.13.0): matter toggles — empty field -> the
             # placeholder line is consumed, assembling byte-identical
             # to a book without the feature.
-            dedication_block = dedication_latex(params.get('dedication'))
+            dedication_block = (
+                None if fm_suppress.get("dedication")
+                else dedication_latex(params.get('dedication')))
             back_matter_block = back_matter_latex(
-                params.get('acknowledgements'),
-                params.get('about_the_author'))
+                None if fm_suppress.get("acknowledgements")
+                else params.get('acknowledgements'),
+                None if fm_suppress.get("about_the_author")
+                else params.get('about_the_author'))
             
             # Title-page slot: H-001 arbitration fills it with either the
             # author's classified cluster or the standard system page —
