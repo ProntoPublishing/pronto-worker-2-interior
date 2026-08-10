@@ -44,5 +44,19 @@ class TestClaimClearsStaleState(unittest.TestCase):
         self.assertIn("Started At", f)
 
 
+class TestVoidIsTerminal(unittest.TestCase):
+    """Void joins the terminal set (sanctioned 2026-08-10). W2's guard is
+    inline in process_service, so it is exercised there rather than via
+    check_idempotency."""
+
+    def test_void_service_is_a_noop(self):
+        p = InteriorProcessor.__new__(InteriorProcessor)
+        p.airtable_client = MagicMock()
+        p.airtable_client.get_service.return_value = {"Status": "Void"}
+        out = p.process_service("svcTest")
+        self.assertEqual(out["status"], "voided")
+        p.airtable_client.update_service.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

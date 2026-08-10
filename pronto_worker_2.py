@@ -68,7 +68,7 @@ logger = logging.getLogger(__name__)
 
 # Single source of truth for the deployed worker version.
 # Referenced by app.py's /health endpoint — bump only here.
-WORKER_VERSION = "1.14.1-a1"
+WORKER_VERSION = "1.14.2-a1"
 
 
 def bare_image_hold_reason(blocks) -> Optional[str]:
@@ -219,6 +219,18 @@ class InteriorProcessor:
                 return {
                     'status': 'already_processing',
                     'message': 'Service is currently being processed',
+                    'service_id': service_id
+                }
+            # Void is terminal (sanctioned 2026-08-10). A voided line has
+            # been closed out with a money disposition recorded; re-running
+            # it would resurrect work the house has already settled. The
+            # poller never reaches here (it polls Status=Paid), so this
+            # guards the operator POST.
+            if current_status == 'Void':
+                logger.info(f"[{run_id}] Service {service_id} is Void; skipping")
+                return {
+                    'status': 'voided',
+                    'message': 'Service was voided; a closed line is not reprocessed',
                     'service_id': service_id
                 }
             
