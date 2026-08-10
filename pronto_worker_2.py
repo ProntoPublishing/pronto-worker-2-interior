@@ -68,7 +68,7 @@ logger = logging.getLogger(__name__)
 
 # Single source of truth for the deployed worker version.
 # Referenced by app.py's /health endpoint — bump only here.
-WORKER_VERSION = "1.14.0-a1"
+WORKER_VERSION = "1.14.1-a1"
 
 
 def bare_image_hold_reason(blocks) -> Optional[str]:
@@ -893,7 +893,16 @@ class InteriorProcessor:
             # NOTE: Only use 'Status' (singular), never 'Statuses' (plural)
             'Status': 'Processing',
             'Started At': datetime.now(timezone.utc).isoformat(),
-            'Worker Version': self.worker_version
+            'Worker Version': self.worker_version,
+            # Stale-state hygiene (sanctioned 2026-08-10): a claim
+            # supersedes the previous run, so that run's verdict must not
+            # survive underneath this one. Blocked additionally feeds the
+            # Blocked Services rollup that delivery views read, so
+            # staleness here can hold an order, not merely mislead a
+            # reader. A re-hold re-sets both at the terminal write.
+            'Error Log': '',
+            'Blocked': False,
+            'Blocked Reason': '',
         }
         
         self.airtable_client.update_service(service_id, fields)
